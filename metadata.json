@@ -1,0 +1,6 @@
+{
+  "name": "Secure PDF Sandbox",
+  "description": "A fully private, 100% client-side PDF editor and signer. All operations execute entirely inside volatile browser memory with robust file purging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
