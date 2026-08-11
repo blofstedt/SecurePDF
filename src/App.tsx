@@ -710,7 +710,7 @@ export default function App() {
   const [isPurging, setIsPurging] = useState<boolean>(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [draggedElementId, setDraggedElementId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [resizeDirection, setResizeDirection] = useState<"br" | null>(null);
@@ -926,6 +926,13 @@ export default function App() {
         console.error("PDF Render Error:", err);
         addLog(`PDF Loader Error: ${err.message}`, "warning");
         setLoading(false);
+        // Clear invalid pdf bytes
+        if (err.name === "InvalidPDFException" || err.message?.includes("Invalid PDF structure")) {
+          setPdfBytes(null);
+          setPdfDocProxy(null);
+          setPdfFileName("");
+          addLog("Invalid PDF file selected. Please choose a valid PDF document.", "warning");
+        }
       }
     };
 
@@ -1006,7 +1013,7 @@ export default function App() {
       color: rgb(0.09, 0.12, 0.15),
     });
 
-    page.drawText("🔒 CLIENT ENVIRONMENT PRIVATE SANDBOX", {
+    page.drawText("[SECURE] CLIENT ENVIRONMENT PRIVATE SANDBOX", {
       x: 35,
       y: 810,
       size: 13,
@@ -1309,7 +1316,6 @@ export default function App() {
         "Added text layer",
       );
       setSelectedAnnotationId(newTextAnn.id);
-      setToolMode("select"); // Instantly select to drag/rotate
       addLog("Placed editable text block layer on page.", "info");
     } else if (toolMode === "shape") {
       const newShapeAnn: AnnotationItem = {
@@ -1696,7 +1702,6 @@ export default function App() {
   // Draggable handlers
   const handleDragStart = (e: React.MouseEvent, ann: AnnotationItem) => {
     e.stopPropagation();
-    if (toolMode !== "select") return;
 
     setSelectedAnnotationId(ann.id);
     setDraggedElementId(ann.id);
@@ -1715,7 +1720,6 @@ export default function App() {
 
   const handleResizeStart = (e: React.MouseEvent, ann: AnnotationItem) => {
     e.stopPropagation();
-    if (toolMode !== "select") return;
 
     setSelectedAnnotationId(ann.id);
     setDraggedElementId(ann.id);
@@ -2226,11 +2230,12 @@ export default function App() {
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
-          onMouseDown={(e) => handleDragStart(e, ann)}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           className={`absolute flex items-center justify-between group pointer-events-auto select-none ${
             isSelected
-              ? "ring-2 ring-emerald-400 bg-emerald-500/5 cursor-move z-20 shadow-md"
-              : "hover:ring-1 hover:ring-gray-400 cursor-pointer z-10"
+              ? "ring-2 ring-emerald-400 bg-emerald-500/5 z-20 shadow-md"
+              : "hover:ring-1 hover:ring-gray-400 z-10"
           }`}
           style={{
             left: x_px,
@@ -2239,9 +2244,22 @@ export default function App() {
             height: h_px,
           }}
         >
-          <input
+          {/* Edge Drag Handles */}
+          <div onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => handleDragStart(e, ann)} className="absolute top-0 left-0 w-full h-2 cursor-move z-20" />
+          <div onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => handleDragStart(e, ann)} className="absolute bottom-0 left-0 w-full h-2 cursor-move z-20" />
+          <div onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => handleDragStart(e, ann)} className="absolute top-0 left-0 w-2 h-full cursor-move z-20" />
+          <div onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => handleDragStart(e, ann)} className="absolute top-0 right-0 w-2 h-full cursor-move z-20" />
+          
+          <textarea
             id={`input-ann-${ann.id}`}
-            type="text"
             value={ann.text || ""}
             onChange={(e) => {
               const capText = e.target.value;
@@ -2285,7 +2303,7 @@ export default function App() {
                     ? "serif"
                     : "sans-serif",
             }}
-            className="bg-transparent border-none outline-hidden w-full h-full px-1.5 focus:bg-white/40 leading-none rounded-xs select-text cursor-text"
+            className="bg-transparent border-none outline-hidden w-full h-full px-1.5 focus:bg-white/40 leading-tight rounded-xs select-text cursor-text resize-none overflow-hidden"
           />
 
           {/* Action corner tags overlay when mouse over */}
@@ -2309,7 +2327,7 @@ export default function App() {
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900 cursor-se-resize shadow-xs"
+              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900 cursor-se-resize shadow-xs z-30"
             />
           )}
         </div>
@@ -2321,6 +2339,8 @@ export default function App() {
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto select-none flex items-center justify-center p-0.5 ${
             isSelected
@@ -2385,6 +2405,8 @@ export default function App() {
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto select-none flex items-center justify-center ${
             isSelected
@@ -2451,6 +2473,8 @@ export default function App() {
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto cursor-move ${
             isSelected ? "ring-2 ring-emerald-400 z-20 shadow-md" : "z-10"
@@ -2479,6 +2503,8 @@ export default function App() {
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto select-none bg-black cursor-move ${
             isSelected ? "ring-2 ring-emerald-400 z-20 shadow-md" : "z-10"
@@ -2946,6 +2972,34 @@ export default function App() {
                   if (toolMode === "select" && selectedAnnotationId) {
                     setSelectedAnnotationId(null);
                   }
+                }}
+                onDoubleClick={(e) => {
+                  if (toolMode === "text" || toolMode === "draw") return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const clickX_px = e.clientX - rect.left;
+                  const clickY_px = e.clientY - rect.top;
+                  const pdfX = clickX_px / scaleMultiplier;
+                  const pdfY = clickY_px / scaleMultiplier;
+                  const newTextAnn: AnnotationItem = {
+                    id: `ann_text_${Date.now()}`,
+                    type: "text",
+                    pageNumber: currentPage,
+                    x: pdfX - 10,
+                    y: pdfY - 14,
+                    width: 140,
+                    height: 56, // Slightly taller default for textarea
+                    text: "Type text here",
+                    fontSize: textFontSize,
+                    fontColor: textFontColor,
+                    fontFamily: textFontFamily,
+                  };
+                  dispatchAnnotationUpdate(
+                    (prev) => [...prev, newTextAnn],
+                    "Added text layer via double click",
+                  );
+                  setSelectedAnnotationId(newTextAnn.id);
+                  setToolMode("select");
+                  addLog("Placed editable text block layer on page.", "info");
                 }}
                 className="relative shadow-2xl bg-white dark:bg-[#e2e8f0] border border-slate-300 dark:border-slate-600 select-none scale-100 transition-all origin-center dark:brightness-90"
                 style={{
