@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import * as pdfjsLib from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
-import { PDFDocument, rgb, StandardFonts, PDFName, PDFDict, PDFArray, PDFString, PDFHexString, PDFTextField } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, PDFName, PDFDict, PDFArray, PDFString, PDFHexString, PDFTextField, degrees } from "pdf-lib";
 import {
   ShieldAlert,
   Upload,
   Trash2,
   Eye,
   RotateCcw,
+  RotateCw,
+  MoreVertical,
   Download,
   FileMinus,
   Sparkles,
@@ -44,6 +47,9 @@ import {
   Loader2,
   X,
   Grid,
+  HardDrive,
+  CheckCircle2,
+  DownloadCloud,
 } from "lucide-react";
 
 import {
@@ -52,6 +58,11 @@ import {
   ActivityLog,
   PDFPageSize,
 } from "./types";
+import {
+  saveAutoSaveSession,
+  loadAutoSaveSession,
+  clearAutoSaveSession,
+} from "./lib/db";
 import SignatureModal from "./components/SignatureModal";
 import Toolbar, { ToolMode, StampType } from "./components/Toolbar";
 import LayerControl from "./components/LayerControl";
@@ -60,6 +71,7 @@ import PurgeOverlay from "./components/PurgeOverlay";
 import PdfMergeModal from "./components/PdfMergeModal";
 import PdfCompressModal from "./components/PdfCompressModal";
 import PdfSearch from "./components/PdfSearch";
+import FindAndRedactModal from "./components/FindAndRedactModal";
 
 // Initialize PDFJS Worker (using unpkg matching our installed 6.0.227)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -576,6 +588,8 @@ function PageThumbnailCard({
   isActive,
   onClick,
   onDelete,
+  onRotateCw,
+  onRotateCcw,
 }: {
   key?: React.Key;
   pageNumber: number;
@@ -583,9 +597,38 @@ function PageThumbnailCard({
   isActive: boolean;
   onClick: () => void;
   onDelete: (e: React.MouseEvent) => void;
+  onRotateCw: (e: React.MouseEvent) => void;
+  onRotateCcw: (e: React.MouseEvent) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+        setMenuPosition(null);
+      }
+    };
+    if (isMenuOpen || menuPosition) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [isMenuOpen, menuPosition]);
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenuPosition({ x: e.clientX, y: e.clientY });
+    setIsMenuOpen(true);
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -636,6 +679,7 @@ function PageThumbnailCard({
   return (
     <div
       onClick={onClick}
+      onContextMenu={handleContextMenu}
       className={`group relative flex flex-col items-center p-2 rounded-xl border transition-all cursor-pointer ${
         isActive
           ? "border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-indigo-500/50 shadow-md"
@@ -650,13 +694,51 @@ function PageThumbnailCard({
         )}
         <canvas ref={canvasRef} className="max-w-full max-h-full object-contain shadow-xs" />
 
-        <button
-          onClick={onDelete}
-          title={`Delete page ${pageNumber}`}
-          className="absolute top-1.5 right-1.5 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
-        >
-          <Trash2 className="w-3 h-3" />
-        </button>
+        {/* Hover Quick Action Buttons */}
+        <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRotateCw(e);
+            }}
+            title={`Rotate page ${pageNumber} 90° Clockwise`}
+            className="p-1 bg-slate-900/80 hover:bg-slate-900 text-white rounded-md shadow-md transition-colors cursor-pointer"
+          >
+            <RotateCw className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRotateCcw(e);
+            }}
+            title={`Rotate page ${pageNumber} 90° Counter-Clockwise`}
+            className="p-1 bg-slate-900/80 hover:bg-slate-900 text-white rounded-md shadow-md transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(e);
+            }}
+            title={`Delete page ${pageNumber}`}
+            className="p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md shadow-md transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenuPosition({ x: rect.left, y: rect.bottom + 4 });
+              setIsMenuOpen(true);
+            }}
+            title="Page Context Menu"
+            className="p-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md shadow-md transition-colors cursor-pointer"
+          >
+            <MoreVertical className="w-3 h-3" />
+          </button>
+        </div>
       </div>
 
       <div className="mt-1.5 flex items-center justify-between w-full px-1">
@@ -675,6 +757,58 @@ function PageThumbnailCard({
           </span>
         )}
       </div>
+
+      {/* Context Menu Popup */}
+      {isMenuOpen && menuPosition && (
+        <div
+          ref={menuRef}
+          style={{
+            position: "fixed",
+            left: Math.min(menuPosition.x, window.innerWidth - 190),
+            top: Math.min(menuPosition.y, window.innerHeight - 150),
+          }}
+          className="z-50 w-48 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1.5 text-xs text-slate-800 dark:text-slate-200 animate-in fade-in zoom-in-95 duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-700/80 mb-1">
+            Page {pageNumber} Options
+          </div>
+          <button
+            onClick={(e) => {
+              setIsMenuOpen(false);
+              setMenuPosition(null);
+              onRotateCw(e);
+            }}
+            className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-slate-700/80 flex items-center gap-2 font-medium transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
+          >
+            <RotateCw className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>Rotate 90° Clockwise</span>
+          </button>
+          <button
+            onClick={(e) => {
+              setIsMenuOpen(false);
+              setMenuPosition(null);
+              onRotateCcw(e);
+            }}
+            className="w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-slate-700/80 flex items-center gap-2 font-medium transition-colors cursor-pointer text-slate-700 dark:text-slate-200"
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+            <span>Rotate 90° Counter-CW</span>
+          </button>
+          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+          <button
+            onClick={(e) => {
+              setIsMenuOpen(false);
+              setMenuPosition(null);
+              onDelete(e);
+            }}
+            className="w-full text-left px-3 py-2 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 flex items-center gap-2 font-medium transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+            <span>Delete Page</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -709,6 +843,7 @@ export default function App() {
 
   // Canvas and interaction state
   const [annotations, setAnnotations] = useState<AnnotationItem[]>([]);
+  const [savedSignatures, setSavedSignatures] = useState<SavedSignature[]>([]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<
     string | null
   >(null);
@@ -734,6 +869,127 @@ export default function App() {
     x: number;
     y: number;
   } | null>(null);
+
+  // Auto-Save and PWA state
+  const [autoSaveStatus, setAutoSaveStatus] = useState<
+    "saved" | "saving" | "restored" | "idle"
+  >("idle");
+  const [restoredNotice, setRestoredNotice] = useState<{
+    fileName: string;
+    annotationsCount: number;
+    timestamp: number;
+  } | null>(null);
+  const [isAutoSaveLoaded, setIsAutoSaveLoaded] = useState(false);
+
+  const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState(false);
+
+  // Listen for PWA install prompt
+  useEffect(() => {
+    const handleBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setDeferredInstallPrompt(e);
+    };
+    const handleAppInstalled = () => {
+      setIsAppInstalled(true);
+      setDeferredInstallPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
+    window.addEventListener("appinstalled", handleAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  const handleTriggerPwaInstall = async () => {
+    if (deferredInstallPrompt) {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      if (choice && choice.outcome === "accepted") {
+        setIsAppInstalled(true);
+      }
+      setDeferredInstallPrompt(null);
+    } else {
+      alert(
+        "To install Secure PDF on your mobile phone:\n\n" +
+          "• iOS (Safari): Tap Share button → 'Add to Home Screen'\n" +
+          "• Android (Chrome): Tap '⋮' Menu → 'Add to Home screen' or 'Install App'",
+      );
+    }
+  };
+
+  // 1. Initial Load from IndexedDB
+  useEffect(() => {
+    async function restoreSession() {
+      try {
+        const session = await loadAutoSaveSession();
+        if (session && session.pdfBytes && session.pdfBytes.byteLength > 0) {
+          setPdfBytes(session.pdfBytes);
+          setPdfFileName(session.pdfFileName || "Restored_Document.pdf");
+          setCurrentPage(session.currentPage || 1);
+          setAnnotations(session.annotations || []);
+          if (session.savedSignatures && session.savedSignatures.length > 0) {
+            setSavedSignatures(session.savedSignatures);
+          }
+          setRestoredNotice({
+            fileName: session.pdfFileName || "Restored_Document.pdf",
+            annotationsCount: (session.annotations || []).length,
+            timestamp: session.timestamp,
+          });
+          setAutoSaveStatus("restored");
+          addLog(
+            "Restored document state from IndexedDB auto-save session",
+            "info",
+          );
+        }
+      } catch (err) {
+        console.warn("Failed to load auto-save session:", err);
+      } finally {
+        setIsAutoSaveLoaded(true);
+      }
+    }
+    restoreSession();
+  }, []);
+
+  // 2. Debounced Auto-Save to IndexedDB
+  const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!isAutoSaveLoaded) return;
+    if (!pdfBytes) return;
+
+    setAutoSaveStatus("saving");
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await saveAutoSaveSession({
+          pdfBytes,
+          pdfFileName,
+          currentPage,
+          annotations,
+          savedSignatures,
+          timestamp: Date.now(),
+        });
+        setAutoSaveStatus("saved");
+      } catch (err) {
+        console.warn("Auto-save to IndexedDB failed:", err);
+        setAutoSaveStatus("idle");
+      }
+    }, 800);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [
+    pdfBytes,
+    pdfFileName,
+    currentPage,
+    annotations,
+    savedSignatures,
+    isAutoSaveLoaded,
+  ]);
 
   useEffect(() => {
     const handleGlobalClick = () => setShapeContextMenu(null);
@@ -847,8 +1103,9 @@ export default function App() {
   } | null>(null);
 
   // Signatures list
-  const [savedSignatures, setSavedSignatures] = useState<SavedSignature[]>([]);
   const [isSignatureModalOpen, setIsSignatureModalOpen] =
+    useState<boolean>(false);
+  const [isFindAndRedactOpen, setIsFindAndRedactOpen] =
     useState<boolean>(false);
 
   // Sandbox privacy elements
@@ -872,6 +1129,26 @@ export default function App() {
   const renderTaskRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const sidebarContainerRef = useRef<HTMLDivElement>(null);
+  const thumbnailRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
+
+  // Auto-scroll sidebar thumbnail list so the active page slides smoothly to the top position
+  useEffect(() => {
+    if (!isSidebarOpen || !currentPage) return;
+    const timer = setTimeout(() => {
+      const container = sidebarContainerRef.current;
+      const activeCard = thumbnailRefs.current[currentPage];
+      if (container && activeCard) {
+        // Calculate target scrollTop so active card aligns smoothly at the top
+        const targetScrollTop = activeCard.offsetTop - container.offsetTop - 12; // 12px padding offset
+        container.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: "smooth",
+        });
+      }
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [currentPage, isSidebarOpen, numPages]);
 
   // Click outside menu bar listener
   useEffect(() => {
@@ -1415,6 +1692,9 @@ export default function App() {
   };
 
   const handlePurgeFinished = () => {
+    // Clear IndexedDB auto-save session
+    clearAutoSaveSession().catch(console.warn);
+
     // Zero-out arrays before resetting references
     if (pdfBytes) {
       pdfBytes.fill(0); // Physically overwrite bytes in RAM with absolute zeroes!
@@ -2090,6 +2370,43 @@ export default function App() {
       addLog(`Pages successfully removed.`, "success");
     } catch (err: any) {
       addLog(`Failed to delete pages: ${err.message}`, "warning");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRotatePage = async (targetPageNumber: number, direction: "cw" | "ccw") => {
+    if (!pdfBytes || !pdfDocProxy) return;
+
+    setLoading(true);
+    try {
+      const pdfDoc = await PDFDocument.load(pdfBytes, {
+        ignoreEncryption: true,
+      });
+      const totalPages = pdfDoc.getPageCount();
+
+      if (targetPageNumber < 1 || targetPageNumber > totalPages) {
+        setLoading(false);
+        return;
+      }
+
+      const page = pdfDoc.getPage(targetPageNumber - 1);
+      const currentRotation = page.getRotation().angle || 0;
+      const delta = direction === "cw" ? 90 : -90;
+      const newRotation = (currentRotation + delta + 360) % 360;
+
+      page.setRotation(degrees(newRotation));
+
+      const updatedBytes = await pdfDoc.save();
+      setPdfBytes(updatedBytes);
+      setPdfDocProxy(null);
+
+      addLog(
+        `Page ${targetPageNumber} rotated ${direction === "cw" ? "90° Clockwise" : "90° Counter-Clockwise"} (New angle: ${newRotation}°).`,
+        "success"
+      );
+    } catch (err: any) {
+      addLog(`Failed to rotate page: ${err.message}`, "warning");
     } finally {
       setLoading(false);
     }
@@ -2897,6 +3214,25 @@ export default function App() {
         onClose={() => setIsPdfCompressModalOpen(false)}
       />
 
+      <FindAndRedactModal
+        isOpen={isFindAndRedactOpen}
+        onClose={() => setIsFindAndRedactOpen(false)}
+        pdfDocProxy={pdfDocProxy}
+        numPages={numPages}
+        onApplyRedactions={(newRedactions, patternLabel) => {
+          dispatchAnnotationUpdate(
+            (prev) => [...prev, ...newRedactions],
+            `Applied ${newRedactions.length} auto-redaction blocks for ${patternLabel}`,
+          );
+          addLog(
+            `Applied ${newRedactions.length} auto-redaction blackout blocks across document for ${patternLabel}.`,
+            "security",
+          );
+          setToolMode("redact");
+        }}
+        onNavigate={(page) => setCurrentPage(page)}
+      />
+
       {/* Keyboard Shortcuts Help Modal */}
       {isKeyboardHelpOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
@@ -2986,6 +3322,13 @@ export default function App() {
 
       {/* Application Top Bar Header */}
       <header className="h-14 flex items-center justify-between px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 sticky top-0 transition-colors">
+        <input
+          id="pdf-file-uploader-input"
+          type="file"
+          accept="application/pdf"
+          onChange={handleFileUpload}
+          className="hidden"
+        />
         <div className="w-full flex items-center justify-between gap-4">
           <div className="flex items-center gap-6">
             {/* Branding Logo & Title */}
@@ -3001,21 +3344,30 @@ export default function App() {
             {/* Adobe Style Top Menu Bar */}
             <div ref={menuBarRef} className="relative flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-4">
               {(["file", "edit", "insert", "view", "help"] as const).map((menuName) => {
-                const isOpen = activeMenu === menuName;
+                const isDisabled = !pdfBytes && ["edit", "insert", "view"].includes(menuName);
+                const isOpen = activeMenu === menuName && !isDisabled;
                 const label = menuName.charAt(0).toUpperCase() + menuName.slice(1);
                 return (
                   <div key={menuName} className="relative">
                     <button
-                      onClick={() => setActiveMenu(isOpen ? null : menuName)}
+                      disabled={isDisabled}
+                      onClick={() => {
+                        if (isDisabled) return;
+                        setActiveMenu(isOpen ? null : menuName);
+                      }}
                       onMouseEnter={() => {
+                        if (isDisabled) return;
                         if (activeMenu !== null && activeMenu !== menuName) {
                           setActiveMenu(menuName);
                         }
                       }}
-                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer select-none ${
-                        isOpen
-                          ? "bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white"
-                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60"
+                      title={isDisabled ? `Open or upload a PDF to enable ${label} menu` : undefined}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors select-none ${
+                        isDisabled
+                          ? "opacity-40 cursor-not-allowed pointer-events-none text-slate-400 dark:text-slate-500"
+                          : isOpen
+                          ? "bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
+                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 cursor-pointer"
                       }`}
                     >
                       {label}
@@ -3025,16 +3377,16 @@ export default function App() {
                       <div className="absolute left-0 mt-1 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1 text-slate-800 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-150">
                         {menuName === "file" && (
                           <>
-                            <button
+                            <label
+                              htmlFor="pdf-file-uploader-input"
                               onClick={() => {
                                 setActiveMenu(null);
-                                document.getElementById("pdf-file-uploader-input")?.click();
                               }}
                               className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
                             >
                               <span className="flex items-center gap-2"><Upload className="w-3.5 h-3.5 text-indigo-500" /> Open PDF...</span>
                               <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+O</kbd>
-                            </button>
+                            </label>
                             <button
                               onClick={() => {
                                 setActiveMenu(null);
@@ -3143,6 +3495,35 @@ export default function App() {
                             >
                               <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Clear All Annotations</span>
                             </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              disabled={!pdfBytes}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                handleRotatePage(currentPage, "cw");
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                pdfBytes
+                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><RotateCw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Clockwise</span>
+                            </button>
+                            <button
+                              disabled={!pdfBytes}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                handleRotatePage(currentPage, "ccw");
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                pdfBytes
+                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Counter-CW</span>
+                            </button>
                           </>
                         )}
 
@@ -3184,6 +3565,15 @@ export default function App() {
                               className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
                             >
                               <span className="flex items-center gap-2"><EyeOff className="w-3.5 h-3.5 text-rose-500" /> Permanent Redaction</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsFindAndRedactOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer text-rose-600 dark:text-rose-400 font-bold"
+                            >
+                              <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5 text-rose-500" /> Find & Auto-Redact Patterns...</span>
                             </button>
                             <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
                             <button
@@ -3276,30 +3666,109 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Auto-Save Indicator */}
+            {pdfBytes && (
+              <div id="auto-save-status-indicator" className="flex items-center">
+                {autoSaveStatus === "saved" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                    <span className="hidden sm:inline">Auto-Saved</span>
+                  </span>
+                )}
+                {autoSaveStatus === "saving" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/80">
+                    <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+                    <span className="hidden sm:inline">Saving...</span>
+                  </span>
+                )}
+                {autoSaveStatus === "restored" && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80">
+                    <HardDrive className="w-3 h-3 text-indigo-500" />
+                    <span className="hidden sm:inline">Restored</span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Find & Auto-Redact Button */}
+            <button
+              onClick={() => setIsFindAndRedactOpen(true)}
+              disabled={!pdfBytes}
+              title="Find and Auto-Redact Patterns (Emails, SSNs, Credit Cards, etc.)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/80 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold border border-rose-200/80 dark:border-rose-800/80 transition-all cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
+              <span className="hidden sm:inline">Find & Redact</span>
+            </button>
+
+            {/* PWA Install Button */}
+            <button
+              onClick={handleTriggerPwaInstall}
+              title="Install Secure PDF as App"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold border border-indigo-200/80 dark:border-indigo-800/80 transition-all cursor-pointer shrink-0"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden sm:inline">Install App</span>
+            </button>
+
             {/* Core Privacy Checklist */}
             <div
               id="privacy-quick-dashboard"
-              className="hidden lg:flex items-center gap-3 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-100 dark:border-emerald-800/50 rounded-full"
+              className="hidden xl:flex items-center gap-3 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-100 dark:border-emerald-800/50 rounded-full"
             >
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                Memory-Only Active Sandbox
+                Memory Sandbox
               </span>
             </div>
 
             <PdfSearch
               pdfDocProxy={pdfDocProxy}
               onNavigate={(page) => setCurrentPage(page)}
+              onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
             />
           </div>
         </div>
       </header>
 
+      {/* Restored Session Alert Banner */}
+      {restoredNotice && (
+        <div className="bg-indigo-600 dark:bg-indigo-700 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-3 shadow-md z-30 animate-in slide-in-from-top duration-200">
+          <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
+            <HardDrive className="w-4 h-4 text-indigo-200 shrink-0" />
+            <span>
+              Auto-saved session restored for <strong className="underline">{restoredNotice.fileName}</strong> ({restoredNotice.annotationsCount} markup layers)
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setRestoredNotice(null)}
+              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
+            >
+              Keep Session
+            </button>
+            <button
+              onClick={async () => {
+                await clearAutoSaveSession();
+                setRestoredNotice(null);
+                setPdfBytes(null);
+                setPdfFileName("document.pdf");
+                setAnnotations([]);
+                setAutoSaveStatus("idle");
+              }}
+              className="px-2.5 py-1 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
+            >
+              Discard & Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Workspace Layout */}
       <main className="flex-1 w-full relative overflow-hidden flex">
         {/* Left Side Column Panel (Page Thumbnails - Adobe Acrobat style) */}
-        {isSidebarOpen && (
+        {pdfBytes && isSidebarOpen && (
           <aside
             id="sidebar-left-thumbnails"
             className="w-56 lg:w-64 bg-slate-50 dark:bg-slate-800/90 border-r border-slate-200 dark:border-slate-700 flex flex-col z-30 flex-shrink-0 h-full shadow-xs transition-all"
@@ -3311,7 +3780,7 @@ export default function App() {
                 <h2 className="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">
                   Page Thumbnails
                 </h2>
-                {pdfBytes && numPages > 0 && (
+                {numPages > 0 && (
                   <span className="text-[10px] font-bold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/50">
                     {numPages}
                   </span>
@@ -3327,46 +3796,45 @@ export default function App() {
             </div>
 
             {/* Thumbnails Container */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              {pdfBytes && pdfDocProxy && numPages > 0 ? (
+            <div
+              ref={sidebarContainerRef}
+              className="flex-1 overflow-y-auto p-3 space-y-3 scroll-smooth"
+            >
+              {pdfDocProxy && numPages > 0 && (
                 Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
-                  <PageThumbnailCard
+                  <motion.div
                     key={pageNum}
-                    pageNumber={pageNum}
-                    pdfDocProxy={pdfDocProxy}
-                    isActive={currentPage === pageNum}
-                    onClick={() => setCurrentPage(pageNum)}
-                    onDelete={(e) => {
-                      e.stopPropagation();
-                      handleDeletePages(pageNum.toString());
+                    ref={(el) => (thumbnailRefs.current[pageNum] = el)}
+                    layout
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{
+                      type: "spring",
+                      stiffness: 350,
+                      damping: 28,
                     }}
-                  />
-                ))
-              ) : (
-                <div className="p-4 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-center space-y-3 my-4 bg-white/50 dark:bg-slate-800/50">
-                  <Upload className="w-8 h-8 mx-auto text-slate-400 dark:text-slate-500" />
-                  <div>
-                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                      No Document Loaded
-                    </p>
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                      Open a PDF to view page thumbnails here
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => document.getElementById("pdf-file-uploader-input")?.click()}
-                    className="px-3 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-xs transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    className="relative"
                   >
-                    <Upload className="w-3.5 h-3.5" /> Open PDF...
-                  </button>
-                  <input
-                    id="pdf-file-uploader-input"
-                    type="file"
-                    accept="application/pdf"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </div>
+                    <PageThumbnailCard
+                      pageNumber={pageNum}
+                      pdfDocProxy={pdfDocProxy}
+                      isActive={currentPage === pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      onDelete={(e) => {
+                        e.stopPropagation();
+                        handleDeletePages(pageNum.toString());
+                      }}
+                      onRotateCw={(e) => {
+                        e.stopPropagation();
+                        handleRotatePage(pageNum, "cw");
+                      }}
+                      onRotateCcw={(e) => {
+                        e.stopPropagation();
+                        handleRotatePage(pageNum, "ccw");
+                      }}
+                    />
+                  </motion.div>
+                ))
               )}
             </div>
           </aside>
@@ -3381,7 +3849,7 @@ export default function App() {
           {pdfBytes && (
             <>
               {/* Toolbar responsive positioning */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:bottom-auto md:left-auto md:translate-x-0 md:right-4 z-20 pointer-events-none">
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:bottom-auto md:left-auto md:translate-x-0 md:right-4 z-20 pointer-events-none max-w-[98vw]">
                 <Toolbar
                   activeMode={toolMode}
                   setMode={(mode) => {
@@ -3398,6 +3866,7 @@ export default function App() {
                   setActiveStampType={setActiveStampType}
                   onOpenSignatureModal={() => setIsSignatureModalOpen(true)}
                   onSignatureToolClick={() => setIsSidebarOpen(true)}
+                  onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
                   savedSignaturesCount={savedSignatures.length}
                   onDeletePage={() => {
                     handleDeletePages(currentPage.toString());
@@ -3405,43 +3874,43 @@ export default function App() {
                 />
               </div>
 
-              {/* Pagination middle bottom */}
-              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1.5 pointer-events-auto transition-colors">
+              {/* Pagination (Top-Center on Phone, Middle-Bottom on Desktop) */}
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 md:top-auto md:bottom-6 z-20 flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1 pointer-events-auto transition-colors">
                 <button
                   onClick={prevPage}
                   disabled={currentPage <= 1}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
                 >
-                  <ChevronLeft className="w-5 h-5" />
+                  <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
-                <span className="text-sm font-bold text-slate-600 dark:text-slate-400 px-4 min-w-[80px] text-center font-mono">
+                <span className="text-xs md:text-sm font-bold text-slate-600 dark:text-slate-400 px-3 min-w-[70px] md:min-w-[80px] text-center font-mono">
                   {currentPage} / {numPages || "?"}
                 </span>
                 <button
                   onClick={nextPage}
                   disabled={currentPage >= numPages}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
                 >
-                  <ChevronRight className="w-5 h-5" />
+                  <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
                 </button>
               </div>
 
-              {/* Zoom bottom right */}
-              <div className="absolute bottom-6 right-6 z-20 flex items-center bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1.5 pointer-events-auto transition-colors">
+              {/* Zoom (Top-Right on Phone, Bottom-Right on Desktop) */}
+              <div className="absolute top-3 right-3 md:top-auto md:bottom-6 md:right-6 z-20 flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1 pointer-events-auto transition-colors">
                 <button
                   onClick={handleZoomOut}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
+                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
                 >
-                  <ZoomOut className="w-4 h-4" />
+                  <ZoomOut className="w-3.5 h-3.5 md:w-4 md:h-4" />
                 </button>
-                <span className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 px-2 select-none min-w-[50px] text-center">
+                <span className="text-[11px] md:text-xs font-mono font-bold text-slate-700 dark:text-slate-300 px-1.5 select-none min-w-[40px] md:min-w-[50px] text-center">
                   {Math.round(zoomScale * 100)}%
                 </span>
                 <button
                   onClick={handleZoomIn}
-                  className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
+                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
                 >
-                  <ZoomIn className="w-4 h-4" />
+                  <ZoomIn className="w-3.5 h-3.5 md:w-4 md:h-4" />
                 </button>
               </div>
             </>
@@ -3695,16 +4164,25 @@ export default function App() {
                 id="unloaded-blank-prompt"
                 className="flex flex-col items-center justify-center p-8 text-center max-w-sm"
               >
-                <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-100 dark:border-indigo-800/50 text-indigo-600 dark:text-indigo-400 rounded-2xl flex items-center justify-center mb-5 shadow-inner transition-colors">
-                  <Upload className="w-8 h-8 animate-pulse" />
-                </div>
+                <label
+                  htmlFor="pdf-file-uploader-input"
+                  title="Click to select PDF file"
+                  className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border-2 border-indigo-200 dark:border-indigo-700/60 text-indigo-600 dark:text-indigo-400 rounded-3xl flex items-center justify-center mb-5 shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+                >
+                  <Upload className="w-10 h-10 animate-pulse group-hover:animate-none pointer-events-none" />
+                </label>
                 <h3 className="font-sans font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">
                   No Private Document Active
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Upload a standard PDF locally from your device to begin
-                  signing securely.
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-5">
+                  Upload a standard PDF locally from your device to begin editing and signing securely.
                 </p>
+                <label
+                  htmlFor="pdf-file-uploader-input"
+                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md transition-all hover:scale-105 cursor-pointer inline-flex items-center gap-2"
+                >
+                  <Upload className="w-4 h-4 pointer-events-none" /> Open PDF...
+                </label>
               </div>
             )}
           </div>

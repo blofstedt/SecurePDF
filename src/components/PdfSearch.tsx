@@ -1,13 +1,18 @@
 import React from "react";
 import { useState } from "react";
-import { Search, Loader2, ChevronRight, X } from "lucide-react";
+import { Search, Loader2, ChevronRight, X, ShieldAlert } from "lucide-react";
 
 interface PdfSearchProps {
   pdfDocProxy: any;
   onNavigate: (pageNumber: number) => void;
+  onOpenFindAndRedactModal?: () => void;
 }
 
-export default function PdfSearch({ pdfDocProxy, onNavigate }: PdfSearchProps) {
+export default function PdfSearch({
+  pdfDocProxy,
+  onNavigate,
+  onOpenFindAndRedactModal,
+}: PdfSearchProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
@@ -109,6 +114,22 @@ export default function PdfSearch({ pdfDocProxy, onNavigate }: PdfSearchProps) {
               <X className="w-4 h-4" />
             </button>
           </form>
+
+          {onOpenFindAndRedactModal && (
+            <div className="p-2 border-b border-slate-100 dark:border-slate-700 bg-rose-50/50 dark:bg-rose-950/30">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  onOpenFindAndRedactModal();
+                }}
+                className="w-full py-1.5 px-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Find & Auto-Redact Patterns...</span>
+              </button>
+            </div>
+          )}
 
           {hasSearched && (
             <div className="overflow-y-auto p-2 space-y-1">
