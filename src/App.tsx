@@ -1123,6 +1123,7 @@ export default function App() {
   const [resizeDirection, setResizeDirection] = useState<"br" | null>(null);
 
   // References
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const xfaLayerRef = useRef<HTMLDivElement>(null);
   const annotationLayerRef = useRef<HTMLDivElement>(null);
@@ -3323,6 +3324,7 @@ export default function App() {
       {/* Application Top Bar Header */}
       <header className="h-14 flex items-center justify-between px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 sticky top-0 transition-colors">
         <input
+          ref={fileInputRef}
           id="pdf-file-uploader-input"
           type="file"
           accept="application/pdf"
@@ -3377,16 +3379,16 @@ export default function App() {
                       <div className="absolute left-0 mt-1 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1 text-slate-800 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-150">
                         {menuName === "file" && (
                           <>
-                            <label
-                              htmlFor="pdf-file-uploader-input"
+                            <button
                               onClick={() => {
                                 setActiveMenu(null);
+                                fileInputRef.current?.click();
                               }}
                               className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
                             >
                               <span className="flex items-center gap-2"><Upload className="w-3.5 h-3.5 text-indigo-500" /> Open PDF...</span>
                               <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+O</kbd>
-                            </label>
+                            </button>
                             <button
                               onClick={() => {
                                 setActiveMenu(null);
@@ -4164,25 +4166,27 @@ export default function App() {
                 id="unloaded-blank-prompt"
                 className="flex flex-col items-center justify-center p-8 text-center max-w-sm"
               >
-                <label
-                  htmlFor="pdf-file-uploader-input"
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
                   title="Click to select PDF file"
                   className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border-2 border-indigo-200 dark:border-indigo-700/60 text-indigo-600 dark:text-indigo-400 rounded-3xl flex items-center justify-center mb-5 shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer group"
                 >
-                  <Upload className="w-10 h-10 animate-pulse group-hover:animate-none pointer-events-none" />
-                </label>
+                  <Upload className="w-10 h-10 animate-pulse group-hover:animate-none" />
+                </button>
                 <h3 className="font-sans font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">
                   No Private Document Active
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-5">
                   Upload a standard PDF locally from your device to begin editing and signing securely.
                 </p>
-                <label
-                  htmlFor="pdf-file-uploader-input"
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
                   className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md transition-all hover:scale-105 cursor-pointer inline-flex items-center gap-2"
                 >
-                  <Upload className="w-4 h-4 pointer-events-none" /> Open PDF...
-                </label>
+                  <Upload className="w-4 h-4" /> Open PDF...
+                </button>
               </div>
             )}
           </div>
