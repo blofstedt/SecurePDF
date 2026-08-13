@@ -26,6 +26,24 @@ import {
   ChevronDown,
   Moon,
   Sun,
+  Undo,
+  Redo,
+  PenTool,
+  Type,
+  Edit3,
+  Square,
+  Circle,
+  Minus,
+  Palette,
+  EyeOff,
+  CheckSquare,
+  Sidebar,
+  HelpCircle,
+  Lock,
+  Maximize2,
+  Loader2,
+  X,
+  Grid,
 } from "lucide-react";
 
 import {
@@ -552,6 +570,115 @@ async function extractAndCleanAnnotations(bytes: Uint8Array): Promise<{cleanedBy
   }
 }
 
+function PageThumbnailCard({
+  pageNumber,
+  pdfDocProxy,
+  isActive,
+  onClick,
+  onDelete,
+}: {
+  key?: React.Key;
+  pageNumber: number;
+  pdfDocProxy: any;
+  isActive: boolean;
+  onClick: () => void;
+  onDelete: (e: React.MouseEvent) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isCancelled = false;
+    let renderTask: any = null;
+
+    async function renderThumbnail() {
+      if (!pdfDocProxy || !canvasRef.current) return;
+      try {
+        setIsLoading(true);
+        const page = await pdfDocProxy.getPage(pageNumber);
+        if (isCancelled) return;
+
+        const viewport = page.getViewport({ scale: 0.22 });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        renderTask = page.render({
+          canvasContext: ctx,
+          viewport: viewport,
+        });
+
+        await renderTask.promise;
+        if (!isCancelled) setIsLoading(false);
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException") {
+          console.warn("Thumbnail render failed for page", pageNumber, err);
+        }
+      }
+    }
+
+    renderThumbnail();
+
+    return () => {
+      isCancelled = true;
+      if (renderTask) {
+        try {
+          renderTask.cancel();
+        } catch (_) {}
+      }
+    };
+  }, [pdfDocProxy, pageNumber]);
+
+  return (
+    <div
+      onClick={onClick}
+      className={`group relative flex flex-col items-center p-2 rounded-xl border transition-all cursor-pointer ${
+        isActive
+          ? "border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-indigo-500/50 shadow-md"
+          : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 hover:shadow-xs"
+      }`}
+    >
+      <div className="relative w-full aspect-[1/1.3] bg-slate-100 dark:bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center border border-slate-200/80 dark:border-slate-700/80">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-400">
+            <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
+          </div>
+        )}
+        <canvas ref={canvasRef} className="max-w-full max-h-full object-contain shadow-xs" />
+
+        <button
+          onClick={onDelete}
+          title={`Delete page ${pageNumber}`}
+          className="absolute top-1.5 right-1.5 p-1 bg-rose-600 hover:bg-rose-700 text-white rounded-md shadow-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer z-10"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+
+      <div className="mt-1.5 flex items-center justify-between w-full px-1">
+        <span
+          className={`text-[11px] font-bold ${
+            isActive
+              ? "text-indigo-600 dark:text-indigo-400"
+              : "text-slate-600 dark:text-slate-300"
+          }`}
+        >
+          Page {pageNumber}
+        </span>
+        {isActive && (
+          <span className="text-[9px] font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded-md">
+            Active
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Mobile router interception
   const searchParams = new URLSearchParams(window.location.search);
@@ -602,6 +729,24 @@ export default function App() {
 
   const [isPdfMergeModalOpen, setIsPdfMergeModalOpen] = useState(false);
   const [isPdfCompressModalOpen, setIsPdfCompressModalOpen] = useState(false);
+  const [shapeContextMenu, setShapeContextMenu] = useState<{
+    annId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const handleGlobalClick = () => setShapeContextMenu(null);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShapeContextMenu(null);
+    };
+    window.addEventListener("click", handleGlobalClick);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("click", handleGlobalClick);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
 
   const resetAnnotations = (initialAnns: AnnotationItem[] = []) => {
     setAnnotations(initialAnns);
@@ -708,8 +853,13 @@ export default function App() {
 
   // Sandbox privacy elements
   const [isPurging, setIsPurging] = useState<boolean>(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const [activeMenu, setActiveMenu] = useState<
+    "file" | "edit" | "insert" | "view" | "help" | null
+  >(null);
+  const [isKeyboardHelpOpen, setIsKeyboardHelpOpen] = useState<boolean>(false);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(true);
   const [draggedElementId, setDraggedElementId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -721,6 +871,21 @@ export default function App() {
   const annotationLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const menuBarRef = useRef<HTMLDivElement>(null);
+
+  // Click outside menu bar listener
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        menuBarRef.current &&
+        !menuBarRef.current.contains(e.target as Node)
+      ) {
+        setActiveMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -738,9 +903,17 @@ export default function App() {
         }
       } else if ((e.ctrlKey || e.metaKey) && e.key === "y") {
         redo();
-      } else if (!isInput && e.key === "ArrowLeft") {
+      } else if (
+        !isInput &&
+        (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp")
+      ) {
+        e.preventDefault();
         setCurrentPage((prev) => Math.max(prev - 1, 1));
-      } else if (!isInput && e.key === "ArrowRight") {
+      } else if (
+        !isInput &&
+        (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown")
+      ) {
+        e.preventDefault();
         setCurrentPage((prev) =>
           numPages ? Math.min(prev + 1, numPages) : prev,
         );
@@ -1303,12 +1476,13 @@ export default function App() {
         pageNumber: currentPage,
         x: pdfX - 10,
         y: pdfY - 14,
-        width: 140, // Base pixel bounds matching scaled coordinates
-        height: 28,
+        width: 150,
+        height: 24,
         text: "Type text here",
         fontSize: textFontSize,
         fontColor: textFontColor,
         fontFamily: textFontFamily,
+        userResized: false,
       };
 
       dispatchAnnotationUpdate(
@@ -1323,11 +1497,15 @@ export default function App() {
         type: "shape",
         pageNumber: currentPage,
         x: pdfX - 50,
-        y: pdfY - 15,
+        y: pdfY - 25,
         width: 100,
-        height: 30,
+        height: 50,
         shapeType: "rectangle",
         shapeFillColor: "#ffffff",
+        hasFill: true,
+        shapeStrokeColor: "#000000",
+        shapeStrokeWidth: 2,
+        hasStroke: true,
       };
       dispatchAnnotationUpdate(
         (prev) => [...prev, newShapeAnn],
@@ -1754,7 +1932,7 @@ export default function App() {
             // Keep bounds in range
             const newW = Math.max(25, item.width + deltaX_pdf);
             const newH = Math.max(15, item.height + deltaY_pdf);
-            return { ...item, width: newW, height: newH };
+            return { ...item, width: newW, height: newH, userResized: true };
           }
           return item;
         }),
@@ -2077,15 +2255,69 @@ export default function App() {
               color: rgb(textClr.r / 255, textClr.g / 255, textClr.b / 255),
             });
           } else if (ann.type === "shape") {
-            const fillClr = hexToRgb(ann.shapeFillColor || "#ffffff") || { r: 255, g: 255, b: 255 };
-            page.drawRectangle({
-              x: ann.x,
-              y: height - ann.y - ann.height,
-              width: ann.width,
-              height: ann.height,
-              color: rgb(fillClr.r / 255, fillClr.g / 255, fillClr.b / 255),
-              borderWidth: 0,
-            });
+            const hasFill =
+              ann.hasFill !== false &&
+              ann.shapeFillColor !== "transparent" &&
+              ann.shapeFillColor !== "none";
+            const fillClr = hasFill
+              ? hexToRgb(ann.shapeFillColor || "#ffffff") || {
+                  r: 255,
+                  g: 255,
+                  b: 255,
+                }
+              : null;
+
+            const hasStroke =
+              ann.hasStroke !== false && (ann.shapeStrokeWidth ?? 2) > 0;
+            const strokeClr = hasStroke
+              ? hexToRgb(ann.shapeStrokeColor || "#000000") || {
+                  r: 0,
+                  g: 0,
+                  b: 0,
+                }
+              : null;
+            const strokeWidth = ann.shapeStrokeWidth ?? 2;
+
+            if (ann.shapeType === "circle") {
+              page.drawEllipse({
+                x: ann.x + ann.width / 2,
+                y: height - ann.y - ann.height / 2,
+                xScale: ann.width / 2,
+                yScale: ann.height / 2,
+                color: fillClr
+                  ? rgb(fillClr.r / 255, fillClr.g / 255, fillClr.b / 255)
+                  : undefined,
+                borderColor: strokeClr
+                  ? rgb(strokeClr.r / 255, strokeClr.g / 255, strokeClr.b / 255)
+                  : undefined,
+                borderWidth: hasStroke ? strokeWidth : 0,
+              });
+            } else if (ann.shapeType === "line") {
+              page.drawLine({
+                start: { x: ann.x, y: height - ann.y - ann.height / 2 },
+                end: { x: ann.x + ann.width, y: height - ann.y - ann.height / 2 },
+                thickness: strokeWidth || 2,
+                color: strokeClr
+                  ? rgb(strokeClr.r / 255, strokeClr.g / 255, strokeClr.b / 255)
+                  : fillClr
+                  ? rgb(fillClr.r / 255, fillClr.g / 255, fillClr.b / 255)
+                  : rgb(0, 0, 0),
+              });
+            } else {
+              page.drawRectangle({
+                x: ann.x,
+                y: height - ann.y - ann.height,
+                width: ann.width,
+                height: ann.height,
+                color: fillClr
+                  ? rgb(fillClr.r / 255, fillClr.g / 255, fillClr.b / 255)
+                  : undefined,
+                borderColor: strokeClr
+                  ? rgb(strokeClr.r / 255, strokeClr.g / 255, strokeClr.b / 255)
+                  : undefined,
+                borderWidth: hasStroke ? strokeWidth : 0,
+              });
+            }
           } else if (
             (ann.type === "signature" || ann.type === "image") &&
             ann.signatureDataUrl
@@ -2263,9 +2495,24 @@ export default function App() {
             value={ann.text || ""}
             onChange={(e) => {
               const capText = e.target.value;
+              const targetEl = e.target;
+              targetEl.style.height = "auto";
+              const scrollH = targetEl.scrollHeight;
+              const singleLineH = ((ann.fontSize || 12) * scaleMultiplier) + 6;
+              const neededPxH = Math.max(scrollH, singleLineH);
+              const neededPdfH = Math.ceil(neededPxH / scaleMultiplier);
+
               setAnnotations((prev) =>
                 prev.map((item) =>
-                  item.id === ann.id ? { ...item, text: capText } : item,
+                  item.id === ann.id
+                    ? {
+                        ...item,
+                        text: capText,
+                        height: item.userResized
+                          ? Math.max(item.height, neededPdfH)
+                          : neededPdfH,
+                      }
+                    : item,
                 ),
               );
             }}
@@ -2316,9 +2563,10 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-6 -right-1 text-[10px] bg-red-600 hover:bg-red-500 text-white rounded-md p-1 px-1.5 leading-none transition-all cursor-pointer shadow-xs font-mono pointer-events-auto z-50"
+              className="absolute -top-3 -right-3 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-colors shadow-md pointer-events-auto z-50 cursor-pointer"
+              title="Delete text box"
             >
-              Wipe
+              <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
 
@@ -2469,12 +2717,40 @@ export default function App() {
     }
 
     if (ann.type === "shape") {
+      const hasFill =
+        ann.hasFill !== false &&
+        ann.shapeFillColor !== "transparent" &&
+        ann.shapeFillColor !== "none";
+      const fillClr = hasFill ? ann.shapeFillColor || "#ffffff" : "transparent";
+
+      const hasStroke =
+        ann.hasStroke !== false && (ann.shapeStrokeWidth ?? 2) > 0;
+      const strokeClr = ann.shapeStrokeColor || "#000000";
+      const strokeWidth = hasStroke
+        ? (ann.shapeStrokeWidth ?? 2) * scaleMultiplier
+        : 0;
+
+      const shapeType = ann.shapeType || "rectangle";
+
       return (
         <div
           key={ann.id}
           id={`draggable-${ann.id}`}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedAnnotationId(ann.id);
+          }}
           onDoubleClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedAnnotationId(ann.id);
+            setShapeContextMenu({
+              annId: ann.id,
+              x: e.clientX,
+              y: e.clientY,
+            });
+          }}
           onMouseDown={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto cursor-move ${
             isSelected ? "ring-2 ring-emerald-400 z-20 shadow-md" : "z-10"
@@ -2484,15 +2760,53 @@ export default function App() {
             top: y_px,
             width: w_px,
             height: h_px,
-            backgroundColor: ann.shapeFillColor || "#ffffff",
-            border: isSelected ? "1px dashed #10b981" : "none",
           }}
         >
+          {/* Shape background & border visual element */}
+          {shapeType === "line" ? (
+            <div
+              className="w-full absolute top-1/2 -translate-y-1/2"
+              style={{
+                height: Math.max(2, strokeWidth),
+                backgroundColor: strokeClr,
+              }}
+            />
+          ) : (
+            <div
+              className="w-full h-full transition-all"
+              style={{
+                backgroundColor: fillClr,
+                border: hasStroke
+                  ? `${Math.max(1, strokeWidth)}px solid ${strokeClr}`
+                  : "none",
+                borderRadius: shapeType === "circle" ? "9999px" : "0px",
+              }}
+            />
+          )}
+
+          {/* Delete button at top right */}
+          {isSelected && (
+            <button
+              id={`del-inline-btn-${ann.id}`}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteAnnotation(ann.id);
+              }}
+              className="absolute -top-3 -right-3 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-colors shadow-md pointer-events-auto z-50 cursor-pointer"
+              title="Delete shape"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {/* Resize handle */}
           {isSelected && (
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full cursor-se-resize"
+              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full cursor-se-resize shadow-xs z-30"
             />
           )}
         </div>
@@ -2583,98 +2897,382 @@ export default function App() {
         onClose={() => setIsPdfCompressModalOpen(false)}
       />
 
-      {/* Application Top Bar Header */}
-      <header className="h-16 flex items-center justify-between px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 sticky top-0 transition-colors">
-        <div className="w-full flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 -ml-2 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-
-            {/* Menu */}
-            <div className="relative">
+      {/* Keyboard Shortcuts Help Modal */}
+      {isKeyboardHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <HelpCircle className="w-5 h-5 text-indigo-500" /> Keyboard Shortcuts
+              </h3>
               <button
-                onClick={() => setIsMenuOpen(!isMenuOpen)}
-                className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors cursor-pointer"
+                onClick={() => setIsKeyboardHelpOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
               >
-                Menu <ChevronDown className="w-4 h-4" />
+                ✕
               </button>
-
-              {isMenuOpen && (
-                <div className="absolute left-0 mt-2 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1">
-                  <button
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      setIsSignatureModalOpen(true);
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                  >
-                    Register Signature
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      setIsPdfMergeModalOpen(true);
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                  >
-                    Merge PDFs
-                  </button>
-                  <button
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      setIsPdfCompressModalOpen(true);
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                  >
-                    Compress PDF
-                  </button>
-                  {pdfBytes && (
-                    <button
-                      onClick={() => {
-                        setIsMenuOpen(false);
-                        downloadFinishedPDF();
-                      }}
-                      className="w-full text-left px-4 py-2.5 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                    >
-                      Download Signed PDF
-                    </button>
-                  )}
-                  <div className="border-t border-slate-100 dark:border-slate-700 my-1"></div>
-                  <button
-                    onClick={() => {
-                      setIsMenuOpen(false);
-                      executeSecurePurge();
-                    }}
-                    disabled={!pdfBytes && savedSignatures.length === 0}
-                    className={`w-full text-left px-4 py-2.5 text-xs font-bold transition-colors ${
-                      pdfBytes || savedSignatures.length > 0
-                        ? "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-slate-700 cursor-pointer"
-                        : "text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                    }`}
-                  >
-                    Purge & Exit
-                  </button>
-                </div>
-              )}
             </div>
 
-            <div className="hidden lg:block bg-indigo-600 p-2 rounded text-white shadow-xs ml-2">
-              <UserCheck className="w-5 h-5" />
+            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span>Previous / Next Page</span>
+                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">← → ↑ ↓ / PgUp PgDn</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span>Undo Change</span>
+                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Z</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span>Redo Change</span>
+                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Y</span>
+              </div>
+              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <span>Add Text Box</span>
+                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Double Click Page</span>
+              </div>
             </div>
-            <div className="hidden md:block">
-              <h1 className="text-sm md:text-base font-bold text-slate-800 dark:text-slate-100 tracking-tight leading-none flex items-center gap-2">
-                SecurePDF{" "}
-                <span className="text-indigo-600 dark:text-indigo-400">
-                  Ghost
-                </span>
-              </h1>
-              <p className="text-[10px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-widest mt-1">
-                Ephemeral Processing Unit
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setIsKeyboardHelpOpen(false)}
+                className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 rounded-xl transition-colors cursor-pointer"
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* About & Security Modal */}
+      {isAboutModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                <Lock className="w-5 h-5 text-emerald-500" /> About Secure PDF
+              </h3>
+              <button
+                onClick={() => setIsAboutModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <p>
+                <strong>Secure PDF</strong> is a zero-trust, 100% client-side PDF editing and signature application.
               </p>
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-1">
+                <div className="font-bold text-emerald-700 dark:text-emerald-400">🔒 Volatile Memory Architecture</div>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  No document or signature data is ever transmitted to a remote server. All parsing, rendering, vector stream manipulation, and redactions execute exclusively in volatile local browser memory.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setIsAboutModalOpen(false)}
+                className="px-4 py-2 text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Application Top Bar Header */}
+      <header className="h-14 flex items-center justify-between px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 sticky top-0 transition-colors">
+        <div className="w-full flex items-center justify-between gap-4">
+          <div className="flex items-center gap-6">
+            {/* Branding Logo & Title */}
+            <div className="flex items-center gap-2.5">
+              <div className="bg-indigo-600 p-1.5 rounded-lg text-white shadow-xs">
+                <Lock className="w-4 h-4" />
+              </div>
+              <h1 className="text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-none">
+                Secure PDF
+              </h1>
+            </div>
+
+            {/* Adobe Style Top Menu Bar */}
+            <div ref={menuBarRef} className="relative flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-4">
+              {(["file", "edit", "insert", "view", "help"] as const).map((menuName) => {
+                const isOpen = activeMenu === menuName;
+                const label = menuName.charAt(0).toUpperCase() + menuName.slice(1);
+                return (
+                  <div key={menuName} className="relative">
+                    <button
+                      onClick={() => setActiveMenu(isOpen ? null : menuName)}
+                      onMouseEnter={() => {
+                        if (activeMenu !== null && activeMenu !== menuName) {
+                          setActiveMenu(menuName);
+                        }
+                      }}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer select-none ${
+                        isOpen
+                          ? "bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white"
+                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60"
+                      }`}
+                    >
+                      {label}
+                    </button>
+
+                    {isOpen && (
+                      <div className="absolute left-0 mt-1 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1 text-slate-800 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-150">
+                        {menuName === "file" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                document.getElementById("pdf-file-uploader-input")?.click();
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Upload className="w-3.5 h-3.5 text-indigo-500" /> Open PDF...</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+O</kbd>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsPdfMergeModalOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Layers className="w-3.5 h-3.5 text-indigo-500" /> Merge PDFs...</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsPdfCompressModalOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Maximize2 className="w-3.5 h-3.5 text-indigo-500" /> Compress PDF...</span>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              disabled={!pdfBytes}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                downloadFinishedPDF();
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                pdfBytes
+                                  ? "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 cursor-pointer font-bold"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><Download className="w-3.5 h-3.5" /> Save / Export PDF</span>
+                              <kbd className="text-[10px] font-mono opacity-60">Ctrl+S</kbd>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              disabled={!pdfBytes && savedSignatures.length === 0}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                executeSecurePurge();
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                pdfBytes || savedSignatures.length > 0
+                                  ? "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 cursor-pointer font-bold"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5" /> Purge & Exit</span>
+                            </button>
+                          </>
+                        )}
+
+                        {menuName === "edit" && (
+                          <>
+                            <button
+                              disabled={history.currentIndex <= 0}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                undo();
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                history.currentIndex > 0
+                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><Undo className="w-3.5 h-3.5 text-indigo-500" /> Undo</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Z</kbd>
+                            </button>
+                            <button
+                              disabled={history.currentIndex >= history.timeline.length - 1}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                redo();
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                history.currentIndex < history.timeline.length - 1
+                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><Redo className="w-3.5 h-3.5 text-indigo-500" /> Redo</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Y</kbd>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsSignatureModalOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><PenTool className="w-3.5 h-3.5 text-indigo-500" /> Manage Signatures...</span>
+                            </button>
+                            <button
+                              disabled={annotations.length === 0}
+                              onClick={() => {
+                                setActiveMenu(null);
+                                resetAnnotations([]);
+                              }}
+                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                                annotations.length > 0
+                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                  : "opacity-40 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Clear All Annotations</span>
+                            </button>
+                          </>
+                        )}
+
+                        {menuName === "insert" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setToolMode("text");
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Type className="w-3.5 h-3.5 text-indigo-500" /> Text Box</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">Double Click</kbd>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setToolMode("draw");
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Edit3 className="w-3.5 h-3.5 text-indigo-500" /> Freehand Ink</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setToolMode("shape");
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Square className="w-3.5 h-3.5 text-indigo-500" /> Masking Rectangle</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setToolMode("redact");
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><EyeOff className="w-3.5 h-3.5 text-rose-500" /> Permanent Redaction</span>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsSignatureModalOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><CheckSquare className="w-3.5 h-3.5 text-indigo-500" /> Signature Seal...</span>
+                            </button>
+                          </>
+                        )}
+
+                        {menuName === "view" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsSidebarOpen(!isSidebarOpen);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Sidebar className="w-3.5 h-3.5 text-indigo-500" /> {isSidebarOpen ? "Hide Side Panel" : "Show Side Panel"}</span>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                handleZoomIn();
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><ZoomIn className="w-3.5 h-3.5 text-indigo-500" /> Zoom In</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">+15%</kbd>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                handleZoomOut();
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><ZoomOut className="w-3.5 h-3.5 text-indigo-500" /> Zoom Out</span>
+                              <kbd className="text-[10px] text-slate-400 font-mono">-15%</kbd>
+                            </button>
+                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsDarkMode(!isDarkMode);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2">
+                                {isDarkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-500" />}
+                                {isDarkMode ? "Light Mode" : "Dark Mode"}
+                              </span>
+                            </button>
+                          </>
+                        )}
+
+                        {menuName === "help" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsKeyboardHelpOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><HelpCircle className="w-3.5 h-3.5 text-indigo-500" /> Keyboard Shortcuts</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActiveMenu(null);
+                                setIsAboutModalOpen(true);
+                              }}
+                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                            >
+                              <span className="flex items-center gap-2"><Lock className="w-3.5 h-3.5 text-emerald-500" /> Security & About</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -2694,187 +3292,85 @@ export default function App() {
               pdfDocProxy={pdfDocProxy}
               onNavigate={(page) => setCurrentPage(page)}
             />
-
-            <button
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors cursor-pointer"
-              title="Toggle Dark Mode"
-            >
-              {isDarkMode ? (
-                <Sun className="w-5 h-5" />
-              ) : (
-                <Moon className="w-5 h-5" />
-              )}
-            </button>
           </div>
         </div>
       </header>
 
       {/* Main Workspace Layout */}
       <main className="flex-1 w-full relative overflow-hidden flex">
-        {/* Left Side Column Panel (Upload, Signature, Layers, Logs) - SLIDE OUT */}
-        <section
-          id="sidebar-left-control-rack"
-          className={`absolute z-30 bg-white dark:bg-slate-800 h-full border-r border-slate-200 dark:border-slate-700 w-80 flex-shrink-0 transition-transform duration-300 ease-in-out ${
-            isSidebarOpen
-              ? "translate-x-0 shadow-2xl dark:shadow-slate-900/50"
-              : "-translate-x-full"
-          } overflow-y-auto`}
-        >
-          <div className="p-4 lg:p-6 space-y-6">
-            {/* Close button for sidebar */}
-            <div className="flex justify-end">
+        {/* Left Side Column Panel (Page Thumbnails - Adobe Acrobat style) */}
+        {isSidebarOpen && (
+          <aside
+            id="sidebar-left-thumbnails"
+            className="w-56 lg:w-64 bg-slate-50 dark:bg-slate-800/90 border-r border-slate-200 dark:border-slate-700 flex flex-col z-30 flex-shrink-0 h-full shadow-xs transition-all"
+          >
+            {/* Sidebar Header */}
+            <div className="p-3.5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-800">
+              <div className="flex items-center gap-2">
+                <Grid className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <h2 className="text-xs font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wider">
+                  Page Thumbnails
+                </h2>
+                {pdfBytes && numPages > 0 && (
+                  <span className="text-[10px] font-bold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-800/50">
+                    {numPages}
+                  </span>
+                )}
+              </div>
               <button
                 onClick={() => setIsSidebarOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                title="Hide Side Panel"
+                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
               >
-                <RotateCcw className="w-5 h-5 rotate-45" />{" "}
-                {/* Using rotate as a hacky close button if X is missing */}
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* A. File Load Segment */}
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5 rounded-xl shadow-xs space-y-4 transition-colors">
-              <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center">
-                <FileText className="w-3.5 h-3.5 mr-1.5 text-indigo-600 dark:text-indigo-400" />
-                Configure File Context
-              </h4>
-
-              {!pdfBytes ? (
-                <div className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 hover:border-indigo-400/80 dark:hover:border-indigo-500/80 bg-slate-50 dark:bg-slate-800/50 p-6 rounded-xl text-center transition-colors cursor-pointer relative">
-                    <input
-                      id="pdf-file-uploader-input"
-                      type="file"
-                      accept="application/pdf"
-                      onChange={handleFileUpload}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <Upload className="w-7 h-7 mx-auto text-slate-400 dark:text-slate-500 mb-2.5" />
-                    <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                      Load PDF local copy
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-1 max-w-[200px] mx-auto uppercase tracking-wider font-semibold">
-                      Drag/drop or click device storage
-                    </p>
-                  </div>
-
-                  <div className="relative flex py-1 items-center">
-                    <div className="flex-grow border-t border-slate-200 dark:border-slate-700" />
-                  </div>
-                </div>
+            {/* Thumbnails Container */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {pdfBytes && pdfDocProxy && numPages > 0 ? (
+                Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => (
+                  <PageThumbnailCard
+                    key={pageNum}
+                    pageNumber={pageNum}
+                    pdfDocProxy={pdfDocProxy}
+                    isActive={currentPage === pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    onDelete={(e) => {
+                      e.stopPropagation();
+                      handleDeletePages(pageNum.toString());
+                    }}
+                  />
+                ))
               ) : (
-                <div
-                  id="loaded-file-indicator"
-                  className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700 flex items-start justify-between shadow-xs transition-colors"
-                >
-                  <div className="overflow-hidden mr-1.5">
-                    <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200 truncate">
-                      {pdfFileName}
-                    </div>
-                    <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider mt-0.5">
-                      Size: Local RAM Buffer
-                    </div>
+                <div className="p-4 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-center space-y-3 my-4 bg-white/50 dark:bg-slate-800/50">
+                  <Upload className="w-8 h-8 mx-auto text-slate-400 dark:text-slate-500" />
+                  <div>
+                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                      No Document Loaded
+                    </p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                      Open a PDF to view page thumbnails here
+                    </p>
                   </div>
                   <button
-                    id="reset-file-btn"
-                    onClick={() => {
-                      setPdfBytes(null);
-                      setPdfFileName("");
-                      setPdfDocProxy(null);
-                      resetAnnotations([]);
-                      setSelectedAnnotationId(null);
-                      addLog(
-                        "Document metadata released from browser focus.",
-                        "info",
-                      );
-                    }}
-                    className="p-1 hover:bg-rose-50 dark:hover:bg-rose-900/30 hover:text-rose-600 dark:hover:text-rose-400 rounded-md text-slate-400 dark:text-slate-500 border border-transparent hover:border-rose-100 dark:hover:border-rose-800/50 transition-colors cursor-pointer"
-                    title="Unload document"
+                    onClick={() => document.getElementById("pdf-file-uploader-input")?.click()}
+                    className="px-3 py-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow-xs transition-colors cursor-pointer inline-flex items-center gap-1.5"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <Upload className="w-3.5 h-3.5" /> Open PDF...
                   </button>
+                  <input
+                    id="pdf-file-uploader-input"
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
                 </div>
               )}
             </div>
-
-            {/* B. Saved Signature registry panel in current volatile memory */}
-            {pdfBytes && (
-              <div
-                id="signature-volatile-manager"
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5 rounded-xl shadow-xs space-y-3 transition-colors"
-              >
-                <h4 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider flex items-center">
-                  <Clock className="w-3.5 h-3.5 mr-1.5 text-indigo-600 dark:text-indigo-400 animate-pulse" />
-                  Signature Seals Registry
-                </h4>
-
-                {savedSignatures.length === 0 ? (
-                  <div className="text-center p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200/60 dark:border-slate-700">
-                    <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                      No active signatures registered.
-                    </p>
-                    <button
-                      id="register-sig-empty-launcher"
-                      onClick={() => setIsSignatureModalOpen(true)}
-                      className="mt-2.5 text-[10px] uppercase font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm p-1.5 px-3 rounded-lg transition-all cursor-pointer"
-                    >
-                      + Register Signature
-                    </button>
-                  </div>
-                ) : (
-                  <div id="signature-stamps-tiles" className="space-y-2">
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">
-                      Click a signature to drop on page:
-                    </p>
-                    <div className="grid grid-cols-1 gap-2 max-h-36 overflow-y-auto">
-                      {savedSignatures.map((sig) => (
-                        <button
-                          key={sig.id}
-                          id={`inject-sig-${sig.id}`}
-                          onClick={() => placeSavedSignature(sig)}
-                          className="group flex flex-col items-center justify-center p-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl relative hover:ring-2 hover:ring-indigo-600 cursor-pointer transition-all h-16 shadow-xs"
-                          title="Click to place"
-                        >
-                          <img
-                            src={sig.dataUrl}
-                            alt="Signature outline thumbnail"
-                            className="max-h-12 max-w-[140px] pointer-events-none select-none object-contain dark:invert"
-                            referrerPolicy="no-referrer"
-                          />
-                          <span className="absolute bottom-0 text-[8px] bg-slate-950 text-indigo-400 p-0.5 px-2.5 font-bold uppercase select-none pointer-events-none leading-none rounded-t-md opacity-0 group-hover:opacity-100 transition-all">
-                            DROP SEAL
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* C. Dynamic Layer manager */}
-            {pdfBytes && (
-              <LayerControl
-                annotations={annotations}
-                currentPage={currentPage}
-                selectedId={selectedAnnotationId}
-                onSelect={(id) => setSelectedAnnotationId(id)}
-                onDelete={handleDeleteAnnotation}
-              />
-            )}
-
-            {/* D. History timeline manager */}
-            {pdfBytes && (
-              <HistoryControl
-                history={history}
-                undo={undo}
-                redo={redo}
-                jumpToHistory={jumpToHistory}
-              />
-            )}
-          </div>
-        </section>
+          </aside>
+        )}
 
         {/* Center Canvas Main Board & Tool Controls (Main Panel spacing) */}
         <section
@@ -2986,12 +3482,13 @@ export default function App() {
                     pageNumber: currentPage,
                     x: pdfX - 10,
                     y: pdfY - 14,
-                    width: 140,
-                    height: 56, // Slightly taller default for textarea
+                    width: 150,
+                    height: 24,
                     text: "Type text here",
                     fontSize: textFontSize,
                     fontColor: textFontColor,
                     fontFamily: textFontFamily,
+                    userResized: false,
                   };
                   dispatchAnnotationUpdate(
                     (prev) => [...prev, newTextAnn],
@@ -3264,6 +3761,276 @@ export default function App() {
           </p>
         </div>
       </footer>
+
+      {/* Shape Customization Context Menu */}
+      {shapeContextMenu && (() => {
+        const activeShape = annotations.find(
+          (a) => a.id === shapeContextMenu.annId,
+        );
+        if (!activeShape || activeShape.type !== "shape") return null;
+
+        const shapeType = activeShape.shapeType || "rectangle";
+        const hasFill =
+          activeShape.hasFill !== false &&
+          activeShape.shapeFillColor !== "transparent" &&
+          activeShape.shapeFillColor !== "none";
+        const fillColor = activeShape.shapeFillColor || "#ffffff";
+
+        const hasStroke =
+          activeShape.hasStroke !== false &&
+          (activeShape.shapeStrokeWidth ?? 2) > 0;
+        const strokeColor = activeShape.shapeStrokeColor || "#000000";
+        const strokeWidth = activeShape.shapeStrokeWidth ?? 2;
+
+        const updateShape = (updates: Partial<AnnotationItem>) => {
+          dispatchAnnotationUpdate(
+            (prev) =>
+              prev.map((item) =>
+                item.id === activeShape.id ? { ...item, ...updates } : item,
+              ),
+            "Updated shape properties",
+          );
+        };
+
+        const menuWidth = 260;
+        const menuHeight = 340;
+        const posX = Math.min(
+          Math.max(10, shapeContextMenu.x),
+          window.innerWidth - menuWidth - 10,
+        );
+        const posY = Math.min(
+          Math.max(10, shapeContextMenu.y),
+          window.innerHeight - menuHeight - 10,
+        );
+
+        const fillPresets = [
+          { name: "White", hex: "#ffffff" },
+          { name: "Yellow", hex: "#fef08a" },
+          { name: "Blue", hex: "#bfdbfe" },
+          { name: "Green", hex: "#bbf7d0" },
+          { name: "Red", hex: "#fecaca" },
+          { name: "Gray", hex: "#e2e8f0" },
+          { name: "Black", hex: "#000000" },
+        ];
+
+        const strokePresets = [
+          { name: "Black", hex: "#000000" },
+          { name: "Red", hex: "#ef4444" },
+          { name: "Blue", hex: "#3b82f6" },
+          { name: "Green", hex: "#22c55e" },
+          { name: "Amber", hex: "#f59e0b" },
+          { name: "Gray", hex: "#64748b" },
+          { name: "White", hex: "#ffffff" },
+        ];
+
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+            className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-4 w-64 text-slate-800 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-150"
+            style={{ left: posX, top: posY }}
+          >
+            {/* Title Header */}
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100 dark:border-slate-700">
+              <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                <Palette className="w-3.5 h-3.5" /> Shape Options
+              </span>
+              <button
+                onClick={() => setShapeContextMenu(null)}
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 rounded-md cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* 1. Shape Type Selection */}
+            <div className="mb-3 space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                Shape Type
+              </label>
+              <div className="grid grid-cols-3 gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
+                <button
+                  onClick={() => updateShape({ shapeType: "rectangle" })}
+                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    shapeType === "rectangle"
+                      ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Square className="w-3.5 h-3.5" /> Rect
+                </button>
+                <button
+                  onClick={() => updateShape({ shapeType: "circle" })}
+                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    shapeType === "circle"
+                      ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Circle className="w-3.5 h-3.5" /> Circle
+                </button>
+                <button
+                  onClick={() => updateShape({ shapeType: "line" })}
+                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    shapeType === "line"
+                      ? "bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                  }`}
+                >
+                  <Minus className="w-3.5 h-3.5" /> Line
+                </button>
+              </div>
+            </div>
+
+            {/* 2. Fill Control */}
+            {shapeType !== "line" && (
+              <div className="mb-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                    Fill Color
+                  </span>
+                  <button
+                    onClick={() => updateShape({ hasFill: !hasFill })}
+                    className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                      hasFill
+                        ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300"
+                        : "bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-400"
+                    }`}
+                  >
+                    {hasFill ? "ENABLED" : "NO FILL"}
+                  </button>
+                </div>
+
+                {hasFill && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    {fillPresets.map((preset) => (
+                      <button
+                        key={preset.hex}
+                        onClick={() =>
+                          updateShape({
+                            shapeFillColor: preset.hex,
+                            hasFill: true,
+                          })
+                        }
+                        className={`w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 cursor-pointer transition-transform ${
+                          fillColor.toLowerCase() === preset.hex.toLowerCase()
+                            ? "ring-2 ring-indigo-500 scale-110"
+                            : "hover:scale-105"
+                        }`}
+                        style={{ backgroundColor: preset.hex }}
+                        title={preset.name}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={fillColor.startsWith("#") ? fillColor : "#ffffff"}
+                      onChange={(e) =>
+                        updateShape({
+                          shapeFillColor: e.target.value,
+                          hasFill: true,
+                        })
+                      }
+                      className="w-5 h-5 rounded-full border-0 p-0 bg-transparent cursor-pointer"
+                      title="Custom color"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3. Stroke Control */}
+            <div className="mb-3 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                  Stroke Outline
+                </span>
+                <button
+                  onClick={() => updateShape({ hasStroke: !hasStroke })}
+                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md cursor-pointer transition-colors ${
+                    hasStroke
+                      ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300"
+                      : "bg-slate-100 text-slate-400 dark:bg-slate-700 dark:text-slate-400"
+                  }`}
+                >
+                  {hasStroke ? "ENABLED" : "NO STROKE"}
+                </button>
+              </div>
+
+              {hasStroke && (
+                <div className="space-y-2 pt-0.5">
+                  {/* Stroke Width Selector */}
+                  <div className="flex items-center justify-between gap-1">
+                    {[1, 2, 4, 6].map((w) => (
+                      <button
+                        key={w}
+                        onClick={() =>
+                          updateShape({ shapeStrokeWidth: w, hasStroke: true })
+                        }
+                        className={`flex-1 py-1 text-[10px] font-bold rounded-md border transition-all cursor-pointer ${
+                          strokeWidth === w
+                            ? "border-indigo-600 bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-300"
+                            : "border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        {w}px
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Stroke Color presets */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {strokePresets.map((preset) => (
+                      <button
+                        key={preset.hex}
+                        onClick={() =>
+                          updateShape({
+                            shapeStrokeColor: preset.hex,
+                            hasStroke: true,
+                          })
+                        }
+                        className={`w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 cursor-pointer transition-transform ${
+                          strokeColor.toLowerCase() === preset.hex.toLowerCase()
+                            ? "ring-2 ring-indigo-500 scale-110"
+                            : "hover:scale-105"
+                        }`}
+                        style={{ backgroundColor: preset.hex }}
+                        title={preset.name}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={
+                        strokeColor.startsWith("#") ? strokeColor : "#000000"
+                      }
+                      onChange={(e) =>
+                        updateShape({
+                          shapeStrokeColor: e.target.value,
+                          hasStroke: true,
+                        })
+                      }
+                      className="w-5 h-5 rounded-full border-0 p-0 bg-transparent cursor-pointer"
+                      title="Custom stroke color"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Delete Action */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-700">
+              <button
+                onClick={() => {
+                  handleDeleteAnnotation(activeShape.id);
+                  setShapeContextMenu(null);
+                }}
+                className="w-full py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Shape
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

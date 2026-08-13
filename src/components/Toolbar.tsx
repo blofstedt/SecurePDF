@@ -108,102 +108,102 @@ export default function Toolbar({
       className="flex flex-col-reverse md:flex-row-reverse items-center gap-4 pointer-events-none"
     >
       {/* 1. Core Tool Selectors */}
-      <div className="bg-white dark:bg-slate-800 p-2 rounded-full shadow-xl border border-slate-200 dark:border-slate-700 flex flex-row md:flex-col items-center space-x-2 md:space-x-0 space-y-0 md:space-y-3 transition-colors pointer-events-auto">
+      <div className="bg-white dark:bg-slate-800 p-1.5 rounded-full shadow-xl border border-slate-200 dark:border-slate-700 flex flex-row md:flex-col items-center space-x-1.5 md:space-x-0 space-y-0 md:space-y-1.5 transition-colors pointer-events-auto">
         <button
           id="tool-select-btn"
           title="Selector: Drag, Resize, Edit"
           onClick={() => setMode("select")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "select"
-              ? "bg-blue-500 text-white shadow-lg scale-110"
+              ? "bg-blue-500 text-white shadow-md scale-105"
               : "text-blue-500 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-800/50"
           }`}
         >
-          <MousePointer className="w-5 h-5" />
+          <MousePointer className="w-4 h-4" />
         </button>
 
         <button
           id="tool-text-btn"
           title="Insert Text Box"
           onClick={() => setMode("text")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "text"
-              ? "bg-emerald-500 text-white shadow-lg scale-110"
+              ? "bg-emerald-500 text-white shadow-md scale-105"
               : "text-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-800/50"
           }`}
         >
-          <Type className="w-5 h-5" />
+          <Type className="w-4 h-4" />
         </button>
 
         <button
           id="tool-draw-btn"
           title="Freehand Ink Drawing"
           onClick={() => setMode("draw")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "draw"
-              ? "bg-purple-500 text-white shadow-lg scale-110"
+              ? "bg-purple-500 text-white shadow-md scale-105"
               : "text-purple-500 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-800/50"
           }`}
         >
-          <PenTool className="w-5 h-5" />
+          <PenTool className="w-4 h-4" />
         </button>
 
         <button
           id="tool-stamp-btn"
           title="Place Verification Stamps"
           onClick={() => setMode("stamp")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "stamp"
-              ? "bg-amber-500 text-white shadow-lg scale-110"
+              ? "bg-amber-500 text-white shadow-md scale-105"
               : "text-amber-500 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-800/50"
           }`}
         >
-          <Award className="w-5 h-5" />
+          <Award className="w-4 h-4" />
         </button>
 
         <button
           id="tool-redact-btn"
           title="Secure Redaction"
           onClick={() => setMode("redact")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "redact"
-              ? "bg-rose-500 text-white shadow-lg scale-110"
+              ? "bg-rose-500 text-white shadow-md scale-105"
               : "text-rose-500 bg-rose-50 dark:bg-rose-900/30 hover:bg-rose-100 dark:hover:bg-rose-800/50"
           }`}
         >
-          <Eraser className="w-5 h-5" />
+          <Eraser className="w-4 h-4" />
         </button>
         <button
           id="tool-shape-btn"
           title="Shapes"
           onClick={() => setMode("shape")}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer ${
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
             activeMode === "shape"
-              ? "bg-emerald-500 text-white shadow-lg scale-110"
+              ? "bg-emerald-500 text-white shadow-md scale-105"
               : "text-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-800/50"
           }`}
         >
-          <Square className="w-5 h-5" />
+          <Square className="w-4 h-4" />
         </button>
 
         <button
           id="tool-signature-btn"
           title="Signatures"
           onClick={onSignatureToolClick}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer text-cyan-500 bg-cyan-50 dark:bg-cyan-900/30 hover:bg-cyan-100 dark:hover:bg-cyan-800/50`}
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer text-cyan-500 bg-cyan-50 dark:bg-cyan-900/30 hover:bg-cyan-100 dark:hover:bg-cyan-800/50`}
         >
-          <Signature className="w-5 h-5" />
+          <Signature className="w-4 h-4" />
         </button>
 
-        <div className="w-px h-8 mx-1 md:w-8 md:h-px md:mx-0 md:my-1 bg-slate-200 dark:bg-slate-700 shrink-0" />
+        <div className="w-px h-6 mx-1 md:w-6 md:h-px md:mx-0 md:my-0.5 bg-slate-200 dark:bg-slate-700 shrink-0" />
 
         <button
           id="tool-delete-page-btn"
           title="Delete Current Page"
           onClick={onDeletePage}
-          className={`flex items-center justify-center w-10 h-10 rounded-full transition-all cursor-pointer text-rose-600 bg-rose-100 dark:bg-rose-900/50 hover:bg-rose-200 dark:hover:bg-rose-800/50 hover:scale-110`}
+          className={`flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer text-rose-600 bg-rose-100 dark:bg-rose-900/50 hover:bg-rose-200 dark:hover:bg-rose-800/50 hover:scale-105`}
         >
-          <FileMinus className="w-5 h-5" />
+          <FileMinus className="w-4 h-4" />
         </button>
       </div>
 

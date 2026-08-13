@@ -27,8 +27,14 @@ export interface AnnotationItem {
   drawingWidth?: number;
 
   // Shapes
-  shapeType?: 'rectangle';
+  shapeType?: 'rectangle' | 'circle' | 'line';
   shapeFillColor?: string;
+  hasFill?: boolean;
+  shapeStrokeColor?: string;
+  shapeStrokeWidth?: number;
+  hasStroke?: boolean;
+
+  userResized?: boolean;
 }
 
 export interface PDFPageSize {
