@@ -70,6 +70,10 @@ interface ToolbarProps {
   setHighlighterColor: (color: string) => void;
   highlighterWidth: number;
   setHighlighterWidth: (width: number) => void;
+  inkColor?: string;
+  setInkColor?: (color: string) => void;
+  inkWidth?: number;
+  setInkWidth?: (width: number) => void;
   onOpenSignatureModal: () => void;
   onSignatureToolClick?: () => void;
   onOpenFindAndRedactModal?: () => void;
@@ -98,6 +102,10 @@ export default function Toolbar({
   setHighlighterColor,
   highlighterWidth,
   setHighlighterWidth,
+  inkColor = "#dc2626",
+  setInkColor,
+  inkWidth = 3,
+  setInkWidth,
   onOpenSignatureModal,
   onOpenFindAndRedactModal,
 }: ToolbarProps) {
@@ -196,6 +204,15 @@ export default function Toolbar({
     { name: "Gold Check", hex: "#b45309" },
   ];
 
+  const penColors = [
+    { name: "Pitch Black", hex: "#0f172a" },
+    { name: "Crimson Red", hex: "#dc2626" },
+    { name: "Royal Blue", hex: "#2563eb" },
+    { name: "Emerald Green", hex: "#059669" },
+    { name: "Purple", hex: "#9333ea" },
+    { name: "Amber Gold", hex: "#d97706" },
+  ];
+
   const highlighterColors = [
     { name: "Neon Yellow", hex: "#fde047" },
     { name: "Neon Green", hex: "#86efac" },
@@ -209,7 +226,7 @@ export default function Toolbar({
     setMode(id);
   };
 
-  const hasSubConfig = ["highlighter", "shape", "text", "stamp", "redact", "note"].includes(activeMode);
+  const hasSubConfig = ["draw", "highlighter", "shape", "text", "stamp", "redact", "note"].includes(activeMode);
 
   return (
     <div
@@ -281,41 +298,109 @@ export default function Toolbar({
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               className="w-full"
             >
-              {/* Highlighter Sub-config */}
-              {activeMode === "highlighter" && (
-                <div className="flex flex-col gap-3 text-xs bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[240px] sm:min-w-[280px] max-w-[94vw]">
+              {/* Pen / Draw Sub-config */}
+              {activeMode === "draw" && (
+                <div className="flex flex-col gap-2.5 text-xs bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[240px] sm:min-w-[260px] max-w-[94vw]">
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-                    <span className="font-extrabold text-xs text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Highlighter className="w-4 h-4" /> Highlighter Style
+                    <span className="font-extrabold text-xs text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
+                      <PenTool className="w-4 h-4 shrink-0" /> Pen
                     </span>
-                    <div className="flex items-center gap-2">
-                      <div className="flex gap-2">
-                        {highlighterColors.map((c) => (
-                          <button
-                            key={c.hex}
-                            onClick={() => {
-                              triggerHaptic("light");
-                              setHighlighterColor(c.hex);
-                            }}
-                            className={`w-7 h-7 sm:w-6 sm:h-6 rounded-full border border-black/10 transition-transform cursor-pointer ${
-                              highlighterColor === c.hex
-                                ? "ring-2 ring-amber-500 scale-110 shadow-xs"
-                                : "hover:scale-105 opacity-80"
-                            }`}
-                            style={{ backgroundColor: c.hex }}
-                          />
-                        ))}
-                      </div>
-                      <button
-                        onClick={() => setIsSubConfigDismissed(true)}
-                        className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"
-                        title="Close options"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                    <button
+                      onClick={() => setIsSubConfigDismissed(true)}
+                      className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                      title="Close options"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Color Palette Row */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500 dark:text-slate-400 font-bold text-xs">
+                      Color:
+                    </span>
+                    <div className="flex gap-2">
+                      {penColors.map((c) => (
+                        <button
+                          key={c.hex}
+                          title={c.name}
+                          onClick={() => {
+                            triggerHaptic("light");
+                            setInkColor?.(c.hex);
+                          }}
+                          className={`w-6 h-6 rounded-full border border-black/10 transition-transform cursor-pointer ${
+                            inkColor === c.hex
+                              ? "ring-2 ring-purple-500 scale-110 shadow-xs"
+                              : "hover:scale-105 opacity-80"
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      ))}
                     </div>
                   </div>
 
+                  {/* Thickness Slider Row */}
+                  <div className="flex items-center justify-between space-x-3">
+                    <span className="text-slate-500 dark:text-slate-400 font-bold text-xs">
+                      Thickness:
+                    </span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="16"
+                      value={inkWidth || 3}
+                      onChange={(e) => setInkWidth?.(Number(e.target.value))}
+                      className="flex-1 accent-purple-500 cursor-pointer h-2.5 rounded-lg"
+                    />
+                    <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-200 min-w-[36px] text-right">
+                      {inkWidth || 3}px
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Highlighter Sub-config */}
+              {activeMode === "highlighter" && (
+                <div className="flex flex-col gap-2.5 text-xs bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[240px] sm:min-w-[260px] max-w-[94vw]">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
+                    <span className="font-extrabold text-xs text-amber-600 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
+                      <Highlighter className="w-4 h-4 shrink-0" /> Highlighter
+                    </span>
+                    <button
+                      onClick={() => setIsSubConfigDismissed(true)}
+                      className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                      title="Close options"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Color Palette Row */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500 dark:text-slate-400 font-bold text-xs">
+                      Color:
+                    </span>
+                    <div className="flex gap-2">
+                      {highlighterColors.map((c) => (
+                        <button
+                          key={c.hex}
+                          title={c.name}
+                          onClick={() => {
+                            triggerHaptic("light");
+                            setHighlighterColor(c.hex);
+                          }}
+                          className={`w-6 h-6 rounded-full border border-black/10 transition-transform cursor-pointer ${
+                            highlighterColor === c.hex
+                              ? "ring-2 ring-amber-500 scale-110 shadow-xs"
+                              : "hover:scale-105 opacity-80"
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Thickness Slider Row */}
                   <div className="flex items-center justify-between space-x-3">
                     <span className="text-slate-500 dark:text-slate-400 font-bold text-xs">
                       Thickness:
@@ -402,38 +487,43 @@ export default function Toolbar({
 
               {/* Text Sub-config */}
               {activeMode === "text" && (
-                <div className="flex flex-col gap-3 text-xs bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[260px] sm:min-w-[300px] max-w-[94vw]">
+                <div className="flex flex-col gap-2.5 text-xs bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[240px] sm:min-w-[280px] max-w-[94vw]">
                   <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-                    <span className="font-extrabold text-xs text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Palette className="w-4 h-4" /> Text Style
+                    <span className="font-extrabold text-xs text-emerald-600 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
+                      <Palette className="w-4 h-4 shrink-0" /> Text Style
                     </span>
-                    <div className="flex items-center gap-2">
-                      <div className="flex gap-2">
-                        {colors.map((c) => (
-                          <button
-                            key={c.hex}
-                            id={`text-color-${c.hex}`}
-                            title={c.name}
-                            onClick={() => {
-                              triggerHaptic("light");
-                              setTextFontColor(c.hex);
-                            }}
-                            className={`w-7 h-7 sm:w-6 sm:h-6 rounded-full cursor-pointer transition-transform border border-slate-300 dark:border-slate-600 ${
-                              textFontColor === c.hex
-                                ? "ring-2 ring-emerald-600 dark:ring-emerald-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900 border border-white scale-110 shadow-xs"
-                                : "hover:scale-105 opacity-80"
-                            }`}
-                            style={{ backgroundColor: c.hex }}
-                          />
-                        ))}
-                      </div>
-                      <button
-                        onClick={() => setIsSubConfigDismissed(true)}
-                        className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700"
-                        title="Close options"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                    <button
+                      onClick={() => setIsSubConfigDismissed(true)}
+                      className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                      title="Close options"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Text Color Row */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-500 dark:text-slate-400 font-bold text-xs">
+                      Color:
+                    </span>
+                    <div className="flex gap-2">
+                      {colors.map((c) => (
+                        <button
+                          key={c.hex}
+                          id={`text-color-${c.hex}`}
+                          title={c.name}
+                          onClick={() => {
+                            triggerHaptic("light");
+                            setTextFontColor(c.hex);
+                          }}
+                          className={`w-6 h-6 rounded-full cursor-pointer transition-transform border border-slate-300 dark:border-slate-600 ${
+                            textFontColor === c.hex
+                              ? "ring-2 ring-emerald-600 dark:ring-emerald-400 ring-offset-2 ring-offset-white dark:ring-offset-slate-900 border border-white scale-110 shadow-xs"
+                              : "hover:scale-105 opacity-80"
+                          }`}
+                          style={{ backgroundColor: c.hex }}
+                        />
+                      ))}
                     </div>
                   </div>
 
@@ -540,29 +630,6 @@ export default function Toolbar({
                       <span>Find & Auto-Redact Patterns</span>
                     </button>
                   )}
-                </div>
-              )}
-
-              {/* Draw Pen Sub-config */}
-              {activeMode === "draw" && (
-                <div className="text-xs font-bold text-slate-700 dark:text-slate-300 select-none bg-white/95 dark:bg-slate-800/95 backdrop-blur-md p-3.5 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 transition-colors min-w-[220px] max-w-[94vw]">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center">
-                      <span className="w-2.5 h-2.5 rounded-full bg-purple-500 mr-2 animate-pulse shrink-0" />
-                      <span className="text-purple-600 dark:text-purple-400 font-extrabold uppercase tracking-wider text-xs">
-                        Freehand Ink
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setIsSubConfigDismissed(true)}
-                      className="p-1 rounded-full text-slate-400 hover:text-slate-600"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-normal">
-                    Draw freely with your finger or stylus on the document.
-                  </p>
                 </div>
               )}
 

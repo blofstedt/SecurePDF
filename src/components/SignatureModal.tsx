@@ -43,6 +43,23 @@ export default function SignatureModal({
   const [sessionId, setSessionId] = useState<string>("");
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [removeBgThreshold, setRemoveBgThreshold] = useState(200);
+  const [isDesktop, setIsDesktop] = useState(
+    () => typeof window !== "undefined" && window.innerWidth >= 768
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 768);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isDesktop && activeTab === "phone") {
+      setActiveTab("draw");
+    }
+  }, [isDesktop, activeTab]);
 
   // Canvas refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -352,7 +369,9 @@ export default function SignatureModal({
             { id: "draw", label: "Draw", icon: <Pen className="w-4 h-4" /> },
             { id: "type", label: "Type", icon: <Type className="w-4 h-4" /> },
             { id: "upload", label: "Upload", icon: <Upload className="w-4 h-4" /> },
-            { id: "phone", label: "Phone Sync", icon: <Smartphone className="w-4 h-4" /> },
+            ...(isDesktop
+              ? [{ id: "phone", label: "Phone Sync", icon: <Smartphone className="w-4 h-4" /> }]
+              : []),
             ...(savedSignatures.length > 0
               ? [{ id: "saved", label: `Saved (${savedSignatures.length})`, icon: <Sparkles className="w-4 h-4" /> }]
               : []),
@@ -488,11 +507,11 @@ export default function SignatureModal({
                     >
                       <div
                         style={{ fontFamily: f.family, color: penColor }}
-                        className="text-xl sm:text-2xl py-1 truncate"
+                        className="text-xl sm:text-2xl py-1 truncate dark:!text-white"
                       >
                         {typedText || f.sample}
                       </div>
-                      <div className="text-[10px] text-slate-400">{f.name}</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-300">{f.name}</div>
                     </button>
                   ))}
                 </div>

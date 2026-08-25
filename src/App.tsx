@@ -5747,6 +5747,10 @@ function MainPdfEditor() {
                   setHighlighterColor={setHighlighterColor}
                   highlighterWidth={highlighterWidth}
                   setHighlighterWidth={setHighlighterWidth}
+                  inkColor={inkColor}
+                  setInkColor={setInkColor}
+                  inkWidth={inkWidth}
+                  setInkWidth={setInkWidth}
                   onOpenSignatureModal={() => setIsSignatureModalOpen(true)}
                   onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
                   onOpenWatermarkModal={() => setIsWatermarkModalOpen(true)}
@@ -6091,10 +6095,14 @@ function MainPdfEditor() {
                           )
                           .join(" ")}
                         fill="none"
-                        stroke={inkColor}
-                        strokeWidth={inkWidth * scaleMultiplier}
+                        stroke={toolMode === "highlighter" ? highlighterColor : inkColor}
+                        strokeWidth={
+                          (toolMode === "highlighter" ? highlighterWidth : inkWidth) *
+                          scaleMultiplier
+                        }
                         strokeLinecap="round"
                         strokeLinejoin="round"
+                        opacity={toolMode === "highlighter" ? 0.45 : 1}
                       />
                     )}
 
