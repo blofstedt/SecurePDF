@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import * as pdfjsLib from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -50,6 +50,17 @@ import {
   HardDrive,
   CheckCircle2,
   DownloadCloud,
+  MessageSquare,
+  Share2,
+  Image as ImageIcon,
+  Highlighter,
+  XCircle,
+  Shield,
+  FileSignature,
+  UserCircle,
+  Calendar,
+  Check,
+  XIcon,
 } from "lucide-react";
 
 import {
@@ -57,6 +68,8 @@ import {
   SavedSignature,
   ActivityLog,
   PDFPageSize,
+  WatermarkConfig,
+  PageNumberConfig,
 } from "./types";
 import {
   saveAutoSaveSession,
@@ -64,7 +77,7 @@ import {
   clearAutoSaveSession,
 } from "./lib/db";
 import SignatureModal from "./components/SignatureModal";
-import Toolbar, { ToolMode, StampType } from "./components/Toolbar";
+import Toolbar, { ToolMode, StampType, ShapeType } from "./components/Toolbar";
 import LayerControl from "./components/LayerControl";
 import HistoryControl from "./components/HistoryControl";
 import PurgeOverlay from "./components/PurgeOverlay";
@@ -72,6 +85,13 @@ import PdfMergeModal from "./components/PdfMergeModal";
 import PdfCompressModal from "./components/PdfCompressModal";
 import PdfSearch from "./components/PdfSearch";
 import FindAndRedactModal from "./components/FindAndRedactModal";
+import WatermarkModal from "./components/WatermarkModal";
+import PageOrganizerModal from "./components/PageOrganizerModal";
+import PdfSecurityModal from "./components/PdfSecurityModal";
+import StickyNotePopover from "./components/StickyNotePopover";
+import PwaInstallBanner from "./components/PwaInstallBanner";
+import { triggerHaptic } from "./lib/haptics";
+import { pwaManager } from "./lib/pwa";
 
 // Initialize PDFJS Worker (using unpkg matching our installed 6.0.227)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
@@ -630,6 +650,8 @@ function PageThumbnailCard({
     setIsMenuOpen(true);
   };
 
+  const [aspectRatio, setAspectRatio] = useState<number>(1 / 1.3);
+
   useEffect(() => {
     let isCancelled = false;
     let renderTask: any = null;
@@ -641,7 +663,10 @@ function PageThumbnailCard({
         const page = await pdfDocProxy.getPage(pageNumber);
         if (isCancelled) return;
 
-        const viewport = page.getViewport({ scale: 0.22 });
+        const viewport = page.getViewport({ scale: 0.35 });
+        if (viewport.width && viewport.height) {
+          setAspectRatio(viewport.width / viewport.height);
+        }
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -680,19 +705,22 @@ function PageThumbnailCard({
     <div
       onClick={onClick}
       onContextMenu={handleContextMenu}
-      className={`group relative flex flex-col items-center p-2 rounded-xl border transition-all cursor-pointer ${
+      className={`group relative flex flex-col items-center p-1.5 rounded-xl border transition-all cursor-pointer ${
         isActive
           ? "border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/50 ring-2 ring-indigo-500/50 shadow-md"
           : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 hover:shadow-xs"
       }`}
     >
-      <div className="relative w-full aspect-[1/1.3] bg-slate-100 dark:bg-slate-900 rounded-lg overflow-hidden flex items-center justify-center border border-slate-200/80 dark:border-slate-700/80">
+      <div
+        className="relative w-full bg-white rounded-lg overflow-hidden flex items-center justify-center border border-slate-200/80 dark:border-slate-700/80 shadow-xs"
+        style={{ aspectRatio: `${aspectRatio}` }}
+      >
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-100 dark:bg-slate-900 text-slate-400">
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-400">
             <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
           </div>
         )}
-        <canvas ref={canvasRef} className="max-w-full max-h-full object-contain shadow-xs" />
+        <canvas ref={canvasRef} className="w-full h-full object-cover block" />
 
         {/* Hover Quick Action Buttons */}
         <div className="absolute top-1.5 right-1.5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
@@ -813,23 +841,25 @@ function PageThumbnailCard({
   );
 }
 
-export default function App() {
-  // Mobile router interception
-  const searchParams = new URLSearchParams(window.location.search);
-  const mobileSessionId = searchParams.get("sessionId");
-  const isMobileRoute = window.location.pathname.startsWith("/mobile-sign");
-
-  if (isMobileRoute) {
-    return <MobileSignPage sessionId={mobileSessionId || ""} />;
-  }
-
+function MainPdfEditor() {
   // PDF File state
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [pdfFileName, setPdfFileName] = useState<string>("");
   const [pdfDocProxy, setPdfDocProxy] = useState<any>(null);
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [zoomScale, setZoomScale] = useState<number>(1.2);
+  const [isAutoFitActive, setIsAutoFitActive] = useState<boolean>(true);
+  const hasInitialFittedRef = useRef<boolean>(false);
+  const [zoomScale, setZoomScale] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const isMobile = window.innerWidth < 768;
+      if (isMobile) {
+        return Math.max(0.45, Number(((window.innerWidth - 16) / 595).toFixed(2)));
+      }
+      return Math.max(0.6, Number(((window.innerHeight - 100) / 842).toFixed(2)));
+    }
+    return 1.2;
+  });
   const [deletePageRange, setDeletePageRange] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [originalPageSize, setOriginalPageSize] = useState<PDFPageSize>({
@@ -884,6 +914,109 @@ export default function App() {
   const [deferredInstallPrompt, setDeferredInstallPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState(false);
 
+  // Page navigation direction & linked gesture tracking
+  const pageFoldOverlayRef = useRef<HTMLDivElement | null>(null);
+  const prevPageRef = useRef<() => void>(() => {});
+  const nextPageRef = useRef<() => void>(() => {});
+  const navigateToPageRef = useRef<(p: number) => void>(() => {});
+  const pageImageCacheRef = useRef<Map<string, string>>(new Map());
+  const neighborCardRef = useRef<HTMLDivElement | null>(null);
+  const neighborImgRef = useRef<HTMLImageElement | null>(null);
+  const isNavigatingRef = useRef<boolean>(false);
+  const inertiaAnimRef = useRef<number | null>(null);
+
+  // Mobile touch gestures (Pinch-to-zoom & Linked Swipe pagination)
+  const pinchRef = useRef<{
+    initialDist: number;
+    initialZoom: number;
+    lastRatio: number;
+    isPinching: boolean;
+    originX: number;
+    originY: number;
+    initialMidX: number;
+    initialMidY: number;
+    lastMidX: number;
+    lastMidY: number;
+  }>({
+    initialDist: 0,
+    initialZoom: 1.0,
+    lastRatio: 1.0,
+    isPinching: false,
+    originX: 0,
+    originY: 0,
+    initialMidX: 0,
+    initialMidY: 0,
+    lastMidX: 0,
+    lastMidY: 0,
+  });
+
+  const focalPointRef = useRef<{
+    focalViewportX: number;
+    focalViewportY: number;
+    focalOnPageRatioX: number;
+    focalOnPageRatioY: number;
+    targetZoom: number;
+  } | null>(null);
+
+  const touchSwipeRef = useRef<{
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    currentX: number;
+    currentY: number;
+    startTime: number;
+    isMultiTouch: boolean;
+    isSwiping: boolean;
+    activeNeighborPage: number | null;
+    isPanning: boolean;
+    history: Array<{ x: number; y: number; time: number }>;
+  }>({
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    currentX: 0,
+    currentY: 0,
+    startTime: 0,
+    isMultiTouch: false,
+    isSwiping: false,
+    activeNeighborPage: null,
+    isPanning: false,
+    history: [],
+  });
+
+  // Floating Page Indicator Pill state (pops up on page change and fades out)
+  const [showPageIndicator, setShowPageIndicator] = useState<boolean>(false);
+  const pageIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerPageIndicator = () => {
+    setShowPageIndicator(true);
+    if (pageIndicatorTimeoutRef.current) {
+      clearTimeout(pageIndicatorTimeoutRef.current);
+    }
+    pageIndicatorTimeoutRef.current = setTimeout(() => {
+      setShowPageIndicator(false);
+    }, 1800);
+  };
+
+  useEffect(() => {
+    if (pdfBytes && numPages > 0) {
+      triggerPageIndicator();
+    }
+  }, [currentPage, pdfBytes, numPages]);
+
+  useEffect(() => {
+    return () => {
+      if (pageIndicatorTimeoutRef.current) {
+        clearTimeout(pageIndicatorTimeoutRef.current);
+      }
+      if (inertiaAnimRef.current !== null) {
+        cancelAnimationFrame(inertiaAnimRef.current);
+      }
+    };
+  }, []);
+
   // Listen for PWA install prompt
   useEffect(() => {
     const handleBeforeInstall = (e: Event) => {
@@ -925,6 +1058,8 @@ export default function App() {
       try {
         const session = await loadAutoSaveSession();
         if (session && session.pdfBytes && session.pdfBytes.byteLength > 0) {
+          hasInitialFittedRef.current = false;
+          setIsAutoFitActive(true);
           setPdfBytes(session.pdfBytes);
           setPdfFileName(session.pdfFileName || "Restored_Document.pdf");
           setCurrentPage(session.currentPage || 1);
@@ -1082,6 +1217,9 @@ export default function App() {
   const [textFontColor, setTextFontColor] = useState<string>("#0e1118");
   const [textFontFamily, setTextFontFamily] = useState<string>("Helvetica");
   const [activeStampType, setActiveStampType] = useState<StampType>("APPROVED");
+  const [activeShapeType, setActiveShapeType] = useState<ShapeType>("rectangle");
+  const [highlighterColor, setHighlighterColor] = useState<string>("#fde047");
+  const [highlighterWidth, setHighlighterWidth] = useState<number>(24);
 
   // Ink drawing state
   const [isDrawingInk, setIsDrawingInk] = useState<boolean>(false);
@@ -1090,6 +1228,29 @@ export default function App() {
   >([]);
   const [inkColor, setInkColor] = useState<string>("#b22222"); // Crimson red default
   const [inkWidth, setInkWidth] = useState<number>(3);
+
+  // Modals & New Feature States
+  const [isWatermarkModalOpen, setIsWatermarkModalOpen] = useState<boolean>(false);
+  const [isPageOrganizerOpen, setIsPageOrganizerOpen] = useState<boolean>(false);
+  const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
+  const [watermarkConfig, setWatermarkConfig] = useState<WatermarkConfig | null>(null);
+  const [pageNumberConfig, setPageNumberConfig] = useState<PageNumberConfig | null>(null);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+
+  // Sensitive pattern detection state (for Smart Redaction targeting glow)
+  const [sensitiveHighlights, setSensitiveHighlights] = useState<
+    Array<{
+      id: string;
+      type: "EMAIL" | "PHONE" | "SSN" | "CREDIT_CARD";
+      label: string;
+      text: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }>
+  >([]);
+  const [isScanningSensitive, setIsScanningSensitive] = useState<boolean>(false);
 
   // Redact drawing state
   const [isDrawingRedact, setIsDrawingRedact] = useState<boolean>(false);
@@ -1110,7 +1271,9 @@ export default function App() {
 
   // Sandbox privacy elements
   const [isPurging, setIsPurging] = useState<boolean>(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(() => {
+    return typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+  });
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [activeMenu, setActiveMenu] = useState<
     "file" | "edit" | "insert" | "view" | "help" | null
@@ -1130,8 +1293,47 @@ export default function App() {
   const renderTaskRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
   const sidebarContainerRef = useRef<HTMLDivElement>(null);
   const thumbnailRefs = useRef<{ [key: number]: HTMLDivElement | null }>({});
+  const viewportScrollerRef = useRef<HTMLDivElement>(null);
+  const pageContainerRef = useRef<HTMLDivElement>(null);
+
+  // Lock mobile multi-touch gestures to the PDF viewer container (prevent whole-app / browser window zoom)
+  useEffect(() => {
+    const scroller = viewportScrollerRef.current;
+    if (!scroller) return;
+
+    const preventDefaultMultiTouch = (e: TouchEvent) => {
+      if (e.touches.length >= 2) {
+        e.preventDefault();
+      }
+    };
+
+    const preventGesture = (e: Event) => {
+      e.preventDefault();
+    };
+
+    scroller.addEventListener("touchstart", preventDefaultMultiTouch, {
+      passive: false,
+    });
+    scroller.addEventListener("touchmove", preventDefaultMultiTouch, {
+      passive: false,
+    });
+    scroller.addEventListener("gesturestart", preventGesture, {
+      passive: false,
+    });
+    scroller.addEventListener("gesturechange", preventGesture, {
+      passive: false,
+    });
+
+    return () => {
+      scroller.removeEventListener("touchstart", preventDefaultMultiTouch);
+      scroller.removeEventListener("touchmove", preventDefaultMultiTouch);
+      scroller.removeEventListener("gesturestart", preventGesture);
+      scroller.removeEventListener("gesturechange", preventGesture);
+    };
+  }, []);
 
   // Auto-scroll sidebar thumbnail list so the active page slides smoothly to the top position
   useEffect(() => {
@@ -1151,19 +1353,35 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [currentPage, isSidebarOpen, numPages]);
 
-  // Click outside menu bar listener
+  // Click outside listener to retract menus when clicking or tapping away
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
       if (
+        activeMenu !== null &&
         menuBarRef.current &&
-        !menuBarRef.current.contains(e.target as Node)
+        !menuBarRef.current.contains(target)
       ) {
         setActiveMenu(null);
       }
+      if (
+        isMenuOpen &&
+        mobileMenuRef.current &&
+        !mobileMenuRef.current.contains(target)
+      ) {
+        setIsMenuOpen(false);
+      }
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+
+    if (activeMenu !== null || isMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [activeMenu, isMenuOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1186,15 +1404,13 @@ export default function App() {
         (e.key === "ArrowLeft" || e.key === "ArrowUp" || e.key === "PageUp")
       ) {
         e.preventDefault();
-        setCurrentPage((prev) => Math.max(prev - 1, 1));
+        prevPageRef.current();
       } else if (
         !isInput &&
         (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === "PageDown")
       ) {
         e.preventDefault();
-        setCurrentPage((prev) =>
-          numPages ? Math.min(prev + 1, numPages) : prev,
-        );
+        nextPageRef.current();
       }
     };
 
@@ -1206,6 +1422,172 @@ export default function App() {
   useEffect(() => {
     // Logs removed per user request
   }, []);
+
+  // Smart Redaction: Scan visible page text for sensitive patterns (emails, phone numbers, SSNs, credit cards)
+  useEffect(() => {
+    if (toolMode !== "redact" || !pdfDocProxy || !currentPage) {
+      setSensitiveHighlights([]);
+      return;
+    }
+
+    let isCancelled = false;
+
+    async function scanSensitivePatterns() {
+      try {
+        setIsScanningSensitive(true);
+        const page = await pdfDocProxy.getPage(currentPage);
+        const viewport = page.getViewport({ scale: 1.0 });
+        const textContent = await page.getTextContent();
+        const items = textContent.items;
+
+        const detected: Array<{
+          id: string;
+          type: "EMAIL" | "PHONE" | "SSN" | "CREDIT_CARD";
+          label: string;
+          text: string;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+        }> = [];
+
+        const patterns: Array<{
+          type: "EMAIL" | "PHONE" | "SSN" | "CREDIT_CARD";
+          label: string;
+          regex: RegExp;
+        }> = [
+          {
+            type: "EMAIL",
+            label: "Email Address",
+            regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi,
+          },
+          {
+            type: "PHONE",
+            label: "Phone Number",
+            regex: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+          },
+          {
+            type: "SSN",
+            label: "SSN",
+            regex: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
+          },
+          {
+            type: "CREDIT_CARD",
+            label: "Credit Card",
+            regex: /\b(?:\d[ -]*?){13,19}\b/g,
+          },
+        ];
+
+        for (let i = 0; i < items.length; i++) {
+          const item: any = items[i];
+          if (!item || !item.str) continue;
+
+          const str = item.str;
+
+          for (const p of patterns) {
+            p.regex.lastIndex = 0;
+            let matchExec: RegExpExecArray | null;
+
+            while ((matchExec = p.regex.exec(str)) !== null) {
+              const matchedText = matchExec[0];
+              if (!matchedText) {
+                p.regex.lastIndex++;
+                continue;
+              }
+
+              const matchIdx = matchExec.index;
+              const matchLen = matchedText.length;
+              const strLen = str.length || 1;
+
+              const itemWidth = item.width || 0;
+              const itemHeight =
+                Math.abs(item.transform?.[3]) ||
+                Math.abs(item.transform?.[0]) ||
+                item.height ||
+                11;
+              const itemX = item.transform?.[4] || 0;
+              const itemY = item.transform?.[5] || 0;
+
+              const startFrac = matchIdx / strLen;
+              const lenFrac = matchLen / strLen;
+
+              const offsetX = itemWidth * startFrac;
+              const matchWidth = itemWidth * lenFrac;
+
+              const pdfX = itemX + offsetX;
+              const pdfY = itemY;
+
+              const [vpX, vpY] = viewport.convertToViewportPoint(pdfX, pdfY);
+
+              const boxX = Math.max(0, vpX - 1);
+              const boxY = Math.max(0, vpY - itemHeight - 1);
+              const boxWidth = Math.min(
+                viewport.width - boxX,
+                Math.max(matchWidth, 12) + 3
+              );
+              const boxHeight = Math.min(
+                viewport.height - boxY,
+                itemHeight + 3
+              );
+
+              const key = `${p.type}_${Math.round(boxX)}_${Math.round(boxY)}`;
+              if (!detected.some((d) => d.id === key)) {
+                detected.push({
+                  id: key,
+                  type: p.type,
+                  label: p.label,
+                  text: matchedText,
+                  x: Math.round(boxX),
+                  y: Math.round(boxY),
+                  width: Math.round(boxWidth),
+                  height: Math.round(boxHeight),
+                });
+              }
+            }
+          }
+        }
+
+        if (!isCancelled) {
+          setSensitiveHighlights(detected);
+        }
+      } catch (err) {
+        console.warn("Sensitive pattern scan failed:", err);
+      } finally {
+        if (!isCancelled) {
+          setIsScanningSensitive(false);
+        }
+      }
+    }
+
+    scanSensitivePatterns();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [toolMode, currentPage, pdfDocProxy]);
+
+  // Batch redact all detected sensitive patterns on the current page
+  const handleRedactAllDetected = () => {
+    if (sensitiveHighlights.length === 0) return;
+    const newRedactions: AnnotationItem[] = sensitiveHighlights.map((det) => ({
+      id: `ann_redact_${Date.now()}_${Math.random().toString(36).substr(2, 4)}_${det.id}`,
+      type: "redact",
+      pageNumber: currentPage,
+      x: det.x,
+      y: det.y,
+      width: det.width,
+      height: det.height,
+    }));
+
+    dispatchAnnotationUpdate(
+      (prev) => [...prev, ...newRedactions],
+      `Auto-redacted ${sensitiveHighlights.length} sensitive patterns on page ${currentPage}`
+    );
+    addLog(
+      `Auto-redacted ${sensitiveHighlights.length} sensitive patterns on page ${currentPage}.`,
+      "security"
+    );
+  };
 
   // Helper log generator (No-op)
   const addLog = (
@@ -1246,40 +1628,173 @@ export default function App() {
     return bytes.buffer;
   };
 
-  // PDF.js PDF page loading & rendering
+  // PDF.js Document Loading (runs only when pdfBytes changes)
   useEffect(() => {
-    if (!pdfBytes) return;
+    if (!pdfBytes) {
+      setPdfDocProxy(null);
+      setNumPages(0);
+      return;
+    }
+
+    let isCancelled = false;
+    let loadingTask: any = null;
+
+    const loadDocument = async () => {
+      try {
+        setLoading(true);
+        addLog("Parsing document binary array metadata...", "info");
+        loadingTask = pdfjsLib.getDocument({
+          data: pdfBytes.slice(0),
+          enableXfa: true,
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
+          cMapPacked: true,
+          standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`,
+        });
+
+        const docProxy = await loadingTask.promise;
+        if (isCancelled) {
+          try {
+            docProxy.destroy();
+          } catch (_) {}
+          return;
+        }
+
+        setPdfDocProxy(docProxy);
+        setNumPages(docProxy.numPages);
+        addLog(
+          `Document parsed successfully. Total pages: ${docProxy.numPages}`,
+          "success",
+        );
+      } catch (err: any) {
+        if (isCancelled) return;
+        console.error("PDF Document Load Error:", err);
+        addLog(`PDF Loader Error: ${err.message}`, "warning");
+        setLoading(false);
+        if (
+          err.name === "InvalidPDFException" ||
+          err.message?.includes("Invalid PDF structure")
+        ) {
+          setPdfBytes(null);
+          setPdfDocProxy(null);
+          setPdfFileName("");
+          addLog(
+            "Invalid PDF file selected. Please choose a valid PDF document.",
+            "warning",
+          );
+        }
+      }
+    };
+
+    loadDocument();
+
+    return () => {
+      isCancelled = true;
+      if (loadingTask) {
+        try {
+          loadingTask.destroy();
+        } catch (_) {}
+      }
+    };
+  }, [pdfBytes]);
+
+  // Dynamic calculation to ensure the PDF page fills maximum available workspace
+  const calculateOptimalFit = useCallback(
+    (pageWidth?: number, pageHeight?: number, fitMode: "page" | "width" = "page") => {
+      const pWidth = pageWidth || originalPageSize.width || 595;
+      const pHeight = pageHeight || originalPageSize.height || 842;
+      const container = viewportScrollerRef.current;
+
+      const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+
+      let availW: number;
+      let availH: number;
+
+      if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+        availW = container.clientWidth;
+        availH = container.clientHeight;
+      } else if (typeof window !== "undefined") {
+        const sidebarWidth = isSidebarOpen && !isMobile ? 240 : 0;
+        availW = window.innerWidth - sidebarWidth;
+        availH = window.innerHeight - 60;
+      } else {
+        availW = 800;
+        availH = 700;
+      }
+
+      // Minimal edge margins to maximize screen real estate
+      const paddingX = isMobile ? 8 : (availW > 1200 ? 40 : 20);
+      const paddingY = isMobile ? 72 : 44;
+
+      const usableW = Math.max(120, availW - paddingX);
+      const usableH = Math.max(120, availH - paddingY);
+
+      const scaleW = usableW / pWidth;
+      const scaleH = usableH / pHeight;
+
+      let targetScale: number;
+      if (fitMode === "width" || isMobile) {
+        // Mobile screens: fit full width to fill screen horizontally
+        targetScale = scaleW;
+      } else {
+        // Desktop / large screens: fit to page bounds to maximize size without overflowing
+        targetScale = Math.min(scaleW, scaleH);
+      }
+
+      return Math.max(0.3, Math.min(3.5, Number(targetScale.toFixed(2))));
+    },
+    [originalPageSize.width, originalPageSize.height, isSidebarOpen]
+  );
+
+  // Keep page fitted to available container size when auto-fit is active
+  useEffect(() => {
+    const scroller = viewportScrollerRef.current;
+    if (!scroller) return;
+
+    let resizeTimer: any = null;
+    const handleResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (isAutoFitActive && originalPageSize.width > 0 && originalPageSize.height > 0) {
+          const newFitScale = calculateOptimalFit(originalPageSize.width, originalPageSize.height);
+          if (newFitScale && Math.abs(newFitScale - zoomScale) > 0.02) {
+            setZoomScale(newFitScale);
+          }
+        }
+      }, 80);
+    };
+
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(scroller);
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      clearTimeout(resizeTimer);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [isAutoFitActive, originalPageSize.width, originalPageSize.height, calculateOptimalFit, zoomScale]);
+
+  // PDF.js Page Canvas Rendering (runs when proxy, page, or zoom changes)
+  useEffect(() => {
+    if (!pdfDocProxy || !pdfBytes) return;
+
+    let isCancelled = false;
 
     const renderPDFPage = async () => {
       try {
-        setLoading(true);
-        // Clear previous render tasks
+        // Cancel and wait for any previous render task on this canvas before starting a new one
         if (renderTaskRef.current) {
-          renderTaskRef.current.cancel();
+          try {
+            renderTaskRef.current.cancel();
+            await renderTaskRef.current.promise.catch(() => {});
+          } catch (_) {}
+          renderTaskRef.current = null;
         }
 
-        // Initialize doc proxy if not exists or if bytes change
-        let docProxy = pdfDocProxy;
-        if (!docProxy) {
-          addLog("Parsing document binary array metadata...", "info");
-          // Pass absolute clone of bytes buffer to avoid proxy freezing
-          const loadingTask = pdfjsLib.getDocument({
-            data: pdfBytes.slice(0),
-            enableXfa: true,
-            cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/cmaps/`,
-            cMapPacked: true,
-            standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/standard_fonts/`,
-          });
-          docProxy = await loadingTask.promise;
-          setPdfDocProxy(docProxy);
-          setNumPages(docProxy.numPages);
-          addLog(
-            `Document parsed successfully. Total pages: ${docProxy.numPages}`,
-            "success",
-          );
-        }
+        if (isCancelled) return;
 
-        const page = await docProxy.getPage(currentPage);
+        const page = await pdfDocProxy.getPage(currentPage);
+        if (isCancelled) return;
 
         // Fetch base scale page sizes
         const originalViewport = page.getViewport({ scale: 1.0 });
@@ -1287,79 +1802,156 @@ export default function App() {
         const height_original = originalViewport.height;
         setOriginalPageSize({ width: width_original, height: height_original });
 
-        // Calculate and apply scaled displays
+        // Auto-fit page on initial load to immediately fill available space
+        if (!hasInitialFittedRef.current) {
+          hasInitialFittedRef.current = true;
+          const initialScale = calculateOptimalFit(width_original, height_original);
+          if (initialScale && Math.abs(initialScale - zoomScale) > 0.02) {
+            setZoomScale(initialScale);
+            return;
+          }
+        }
+
+        // Calculate and apply scaled displays using an offscreen canvas to avoid screen flashes
         const viewport = page.getViewport({ scale: zoomScale });
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const context = canvas.getContext("2d");
-          if (context) {
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            setCanvasDimensions({
-              width: viewport.width,
-              height: viewport.height,
-            });
+        const targetWidth = Math.floor(viewport.width);
+        const targetHeight = Math.floor(viewport.height);
 
-            const renderContext = {
-              canvasContext: context,
-              viewport: viewport,
-            };
+        const offscreenCanvas = document.createElement("canvas");
+        offscreenCanvas.width = targetWidth;
+        offscreenCanvas.height = targetHeight;
+        const offscreenContext = offscreenCanvas.getContext("2d");
 
-            const renderTask = page.render(renderContext);
-            renderTaskRef.current = renderTask;
+        if (offscreenContext) {
+          const renderContext = {
+            canvasContext: offscreenContext,
+            viewport: viewport,
+          };
+
+          const renderTask = page.render(renderContext);
+          renderTaskRef.current = renderTask;
+
+          try {
             await renderTask.promise;
-
-            // XFA rendering
-            try {
-              const xfaData = await page.getXfa();
-              if (xfaData && xfaLayerRef.current) {
-                xfaLayerRef.current.innerHTML = "";
-                pdfjsLib.XfaLayer.render({
-                  viewport: viewport.clone({ dontFlip: true }),
-                  div: xfaLayerRef.current,
-                  xfaHtml: xfaData,
-                  annotationStorage: docProxy.annotationStorage,
-                  linkService: null as any,
-                });
-              } else if (xfaLayerRef.current) {
-                xfaLayerRef.current.innerHTML = "";
-              }
-            } catch (xfaErr) {
-              console.warn(
-                "XFA layer not available or failed rendering:",
-                xfaErr,
-              );
+          } catch (renderErr: any) {
+            if (
+              renderErr?.name === "RenderingCancelledException" ||
+              renderErr?.message?.includes("cancelled") ||
+              renderErr?.message?.includes("canceled")
+            ) {
+              // Task was cleanly cancelled; ignore and exit
+              return;
             }
+            throw renderErr;
+          } finally {
+            if (renderTaskRef.current === renderTask) {
+              renderTaskRef.current = null;
+            }
+          }
 
-            // Standard Annotation rendering (AcroForms)
+          if (isCancelled) return;
+
+          // Atomically transfer rendered offscreen buffer to visible canvas with zero screen flash
+          const canvas = canvasRef.current;
+          if (canvas) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            const mainContext = canvas.getContext("2d");
+            mainContext?.drawImage(offscreenCanvas, 0, 0);
+
+            // Cache rendered canvas to pageImageCacheRef for instantaneous linked gesture previews
             try {
-              if (annotationLayerRef.current) {
-                annotationLayerRef.current.innerHTML = "";
-                const annotationsData = await page.getAnnotations();
-                const annotationLayer = new pdfjsLib.AnnotationLayer({
-                  page,
-                  viewport: viewport.clone({ dontFlip: true }),
-                  div: annotationLayerRef.current,
-                  annotationStorage: docProxy.annotationStorage,
-                  linkService: null as any,
-                  accessibilityManager: null,
-                  annotationCanvasMap: null,
-                  annotationEditorUIManager: null,
-                  structTreeLayer: null,
-                  commentManager: null,
-                });
-                await annotationLayer.render({
-                  viewport: viewport.clone({ dontFlip: true }),
-                  div: annotationLayerRef.current,
-                  annotations: annotationsData,
-                  page: page,
-                  linkService: null as any,
-                  annotationStorage: docProxy.annotationStorage,
-                  renderForms: true,
-                });
+              const dataUrl =
+                canvas.toDataURL("image/webp", 0.9) ||
+                canvas.toDataURL("image/png");
+              pageImageCacheRef.current.set(`${currentPage}_${zoomScale.toFixed(2)}`, dataUrl);
+            } catch (_) {}
+          }
+
+          setCanvasDimensions({
+            width: targetWidth,
+            height: targetHeight,
+          });
+
+          // XFA rendering
+          try {
+            const xfaData = await page.getXfa();
+            if (xfaData && xfaLayerRef.current && !isCancelled) {
+              xfaLayerRef.current.innerHTML = "";
+              pdfjsLib.XfaLayer.render({
+                viewport: viewport.clone({ dontFlip: true }),
+                div: xfaLayerRef.current,
+                xfaHtml: xfaData,
+                annotationStorage: pdfDocProxy.annotationStorage,
+                linkService: null as any,
+              });
+            } else if (xfaLayerRef.current) {
+              xfaLayerRef.current.innerHTML = "";
+            }
+          } catch (xfaErr) {
+            console.warn(
+              "XFA layer not available or failed rendering:",
+              xfaErr,
+            );
+          }
+
+          // Standard Annotation rendering (AcroForms)
+          try {
+            if (annotationLayerRef.current && !isCancelled) {
+              annotationLayerRef.current.innerHTML = "";
+              const annotationsData = await page.getAnnotations();
+              const annotationLayer = new pdfjsLib.AnnotationLayer({
+                page,
+                viewport: viewport.clone({ dontFlip: true }),
+                div: annotationLayerRef.current,
+                annotationStorage: pdfDocProxy.annotationStorage,
+                linkService: null as any,
+                accessibilityManager: null,
+                annotationCanvasMap: null,
+                annotationEditorUIManager: null,
+                structTreeLayer: null,
+                commentManager: null,
+              });
+              await annotationLayer.render({
+                viewport: viewport.clone({ dontFlip: true }),
+                div: annotationLayerRef.current,
+                annotations: annotationsData,
+                page: page,
+                linkService: null as any,
+                annotationStorage: pdfDocProxy.annotationStorage,
+                renderForms: true,
+              });
+            }
+          } catch (annErr) {
+            console.warn("Annotation layer rendering failed:", annErr);
+          }
+
+          if (!isCancelled) {
+            if (focalPointRef.current && viewportScrollerRef.current && pageContainerRef.current) {
+              const targetFp = { ...focalPointRef.current };
+              focalPointRef.current = null;
+
+              if (pageContainerRef.current) {
+                pageContainerRef.current.style.transform = "";
+                pageContainerRef.current.style.transformOrigin = "center center";
+                pageContainerRef.current.style.willChange = "auto";
+                pageContainerRef.current.style.transition = "";
               }
-            } catch (annErr) {
-              console.warn("Annotation layer rendering failed:", annErr);
+
+              requestAnimationFrame(() => {
+                if (!pageContainerRef.current || !viewportScrollerRef.current) return;
+                const containerEl = pageContainerRef.current;
+                const currentFocalXInContent =
+                  (containerEl.offsetLeft || 0) + targetFp.focalOnPageRatioX * targetWidth;
+                const currentFocalYInContent =
+                  (containerEl.offsetTop || 0) + targetFp.focalOnPageRatioY * targetHeight;
+
+                const desiredScrollLeft = currentFocalXInContent - targetFp.focalViewportX;
+                const desiredScrollTop = currentFocalYInContent - targetFp.focalViewportY;
+
+                viewportScrollerRef.current.scrollLeft = Math.max(0, desiredScrollLeft);
+                viewportScrollerRef.current.scrollTop = Math.max(0, desiredScrollTop);
+              });
             }
 
             addLog(
@@ -1368,27 +1960,32 @@ export default function App() {
             );
           }
         }
-        setLoading(false);
       } catch (err: any) {
-        if (err.name === "RenderingCancelledException") {
-          // Normal during zooming, ignore
+        if (
+          err?.name === "RenderingCancelledException" ||
+          err?.message?.includes("cancelled") ||
+          err?.message?.includes("canceled") ||
+          isCancelled
+        ) {
+          // Normal during zooming/page changes, ignore
           return;
         }
         console.error("PDF Render Error:", err);
         addLog(`PDF Loader Error: ${err.message}`, "warning");
-        setLoading(false);
-        // Clear invalid pdf bytes
-        if (err.name === "InvalidPDFException" || err.message?.includes("Invalid PDF structure")) {
-          setPdfBytes(null);
-          setPdfDocProxy(null);
-          setPdfFileName("");
-          addLog("Invalid PDF file selected. Please choose a valid PDF document.", "warning");
-        }
       }
     };
 
     renderPDFPage();
-  }, [pdfBytes, currentPage, zoomScale, pdfDocProxy]);
+
+    return () => {
+      isCancelled = true;
+      if (renderTaskRef.current) {
+        try {
+          renderTaskRef.current.cancel();
+        } catch (_) {}
+      }
+    };
+  }, [pdfDocProxy, currentPage, zoomScale, pdfBytes]);
 
   // Track dynamic window resizing or zoom adjustment scales
   const scaleMultiplier = canvasDimensions.width / originalPageSize.width;
@@ -1402,6 +1999,8 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = () => {
       const arrayBuffer = reader.result as ArrayBuffer;
+      hasInitialFittedRef.current = false;
+      setIsAutoFitActive(true);
       setPdfBytes(new Uint8Array(arrayBuffer));
       setPdfFileName(file.name);
       setPdfDocProxy(null); // Force rebuild proxy
@@ -1415,6 +2014,8 @@ export default function App() {
 
   const loadMergedPdf = (mergedPdfBytes: Uint8Array, fileName: string) => {
     setLoading(true);
+    hasInitialFittedRef.current = false;
+    setIsAutoFitActive(true);
     setPdfBytes(mergedPdfBytes);
     setPdfFileName(fileName);
     setPdfDocProxy(null);
@@ -1422,6 +2023,27 @@ export default function App() {
     resetAnnotations([]);
     setSelectedAnnotationId(null);
     addLog(`Securely imported merged PDF: ${fileName}`, "success");
+  };
+
+  const loadPdfFromBytes = async (newBytes: Uint8Array, fileName?: string) => {
+    setLoading(true);
+    hasInitialFittedRef.current = false;
+    setIsAutoFitActive(true);
+    setPdfBytes(newBytes);
+    if (fileName) setPdfFileName(fileName);
+    setPdfDocProxy(null);
+    setSelectedAnnotationId(null);
+  };
+
+  const triggerImageUpload = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) handleImageUpload(file);
+    };
+    input.click();
   };
 
   // Generate dynamic sample agreement so users can play without finding a PDF file!
@@ -1433,6 +2055,8 @@ export default function App() {
     );
     try {
       const ledgerBytes = await createSamplePDF();
+      hasInitialFittedRef.current = false;
+      setIsAutoFitActive(true);
       setPdfBytes(new Uint8Array(ledgerBytes));
       setPdfFileName("Secure_Transaction_Sandbox.pdf");
       setPdfDocProxy(null); // Reset proxy
@@ -1714,32 +2338,563 @@ export default function App() {
     window.location.reload();
   };
 
-  // Navigation page controls
-  const prevPage = () => {
+  // Helper to fetch/render and cache high-res page image for neighbor cards
+  const getCachedPageImage = useCallback(
+    async (pageNum: number, scale: number): Promise<string | null> => {
+      if (!pdfDocProxy || pageNum < 1 || pageNum > numPages) return null;
+      const cacheKey = `${pageNum}_${scale.toFixed(2)}`;
+      if (pageImageCacheRef.current.has(cacheKey)) {
+        return pageImageCacheRef.current.get(cacheKey)!;
+      }
+      try {
+        const page = await pdfDocProxy.getPage(pageNum);
+        const viewport = page.getViewport({ scale });
+        const offscreen = document.createElement("canvas");
+        offscreen.width = Math.floor(viewport.width);
+        offscreen.height = Math.floor(viewport.height);
+        const ctx = offscreen.getContext("2d");
+        if (!ctx) return null;
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const dataUrl =
+          offscreen.toDataURL("image/webp", 0.9) ||
+          offscreen.toDataURL("image/png");
+        pageImageCacheRef.current.set(cacheKey, dataUrl);
+        return dataUrl;
+      } catch (err: any) {
+        if (err?.name !== "RenderingCancelledException") {
+          console.warn("Pre-rendering page error:", pageNum, err);
+        }
+        return null;
+      }
+    },
+    [pdfDocProxy, numPages]
+  );
+
+  // Pre-render neighbor pages in the background whenever document or page or zoom changes
+  useEffect(() => {
+    if (!pdfDocProxy || numPages <= 0) return;
     if (currentPage > 1) {
-      setCurrentPage((p) => p - 1);
+      getCachedPageImage(currentPage - 1, zoomScale);
+    }
+    if (currentPage < numPages) {
+      getCachedPageImage(currentPage + 1, zoomScale);
+    }
+  }, [pdfDocProxy, currentPage, zoomScale, numPages, getCachedPageImage]);
+
+  // Programmatic & Gesture Synchronized Linked Page Navigation
+  const navigateToPage = useCallback(
+    async (targetPage: number) => {
+      if (
+        targetPage < 1 ||
+        targetPage > numPages ||
+        targetPage === currentPage ||
+        isNavigatingRef.current
+      ) {
+        return;
+      }
+
+      const container = pageContainerRef.current;
+      const neighbor = neighborCardRef.current;
+      const neighborImg = neighborImgRef.current;
+      const cardWidth = canvasDimensions.width || 600;
+      const gap = 28;
+      const dir = targetPage > currentPage ? 1 : -1; // 1 = forward (slide left), -1 = backward (slide right)
+
+      if (!container || !neighbor || !neighborImg) {
+        setCurrentPage(targetPage);
+        setSelectedAnnotationId(null);
+        return;
+      }
+
+      isNavigatingRef.current = true;
       setSelectedAnnotationId(null);
+
+      // Save current page snapshot into cache
+      if (canvasRef.current && canvasRef.current.width > 0) {
+        try {
+          const curData =
+            canvasRef.current.toDataURL("image/webp", 0.9) ||
+            canvasRef.current.toDataURL("image/png");
+          pageImageCacheRef.current.set(`${currentPage}_${zoomScale.toFixed(2)}`, curData);
+        } catch (_) {}
+      }
+
+      let targetImgUrl = await getCachedPageImage(targetPage, zoomScale);
+      if (!targetImgUrl && canvasRef.current) {
+        targetImgUrl = canvasRef.current.toDataURL("image/png");
+      }
+
+      if (neighborImg && targetImgUrl) {
+        neighborImg.src = targetImgUrl;
+      }
+
+      const neighborStartX = dir > 0 ? cardWidth + gap : -(cardWidth + gap);
+      const containerEndX = dir > 0 ? -(cardWidth + gap) : cardWidth + gap;
+
+      neighbor.style.display = "block";
+      neighbor.style.transition = "none";
+      neighbor.style.transform = `translate3d(${neighborStartX}px, 0, 0)`;
+
+      container.style.transition = "none";
+      container.style.transform = "translate3d(0, 0, 0)";
+
+      const duration = 280;
+      const ease = "cubic-bezier(0.16, 1, 0.3, 1)";
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          container.style.transition = `transform ${duration}ms ${ease}`;
+          container.style.transform = `translate3d(${containerEndX}px, 0, 0)`;
+
+          neighbor.style.transition = `transform ${duration}ms ${ease}`;
+          neighbor.style.transform = "translate3d(0, 0, 0)";
+
+          setTimeout(() => {
+            setCurrentPage(targetPage);
+            container.style.transition = "none";
+            container.style.transform = "translate3d(0, 0, 0)";
+            neighbor.style.display = "none";
+            neighbor.style.transition = "none";
+            neighbor.style.transform = "";
+            isNavigatingRef.current = false;
+          }, duration + 20);
+        });
+      });
+    },
+    [currentPage, numPages, canvasDimensions.width, zoomScale, getCachedPageImage]
+  );
+
+  const prevPage = useCallback(() => {
+    if (currentPage > 1) {
+      navigateToPage(currentPage - 1);
+    }
+  }, [currentPage, navigateToPage]);
+
+  const nextPage = useCallback(() => {
+    if (currentPage < numPages) {
+      navigateToPage(currentPage + 1);
+    }
+  }, [currentPage, numPages, navigateToPage]);
+
+  // Keep navigation refs synchronized
+  navigateToPageRef.current = navigateToPage;
+  prevPageRef.current = prevPage;
+  nextPageRef.current = nextPage;
+
+  // Viewport Touch Event Handlers for Mobile Pinch-to-Zoom and Linked Left/Right Swipe Page Navigation
+  const handleViewportTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    // Cancel any active pan/pinch inertia animation frame immediately so the user can grab the page
+    if (inertiaAnimRef.current !== null) {
+      cancelAnimationFrame(inertiaAnimRef.current);
+      inertiaAnimRef.current = null;
+    }
+
+    if (isNavigatingRef.current) return;
+
+    if (e.touches.length >= 2) {
+      touchSwipeRef.current.isMultiTouch = true;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+      let originX = 0;
+      let originY = 0;
+      if (pageContainerRef.current) {
+        const cRect = pageContainerRef.current.getBoundingClientRect();
+        originX = midX - cRect.left;
+        originY = midY - cRect.top;
+        pageContainerRef.current.style.transformOrigin = `${originX}px ${originY}px`;
+        pageContainerRef.current.style.transition = "none";
+        pageContainerRef.current.style.willChange = "transform";
+      }
+
+      pinchRef.current = {
+        initialDist: Math.max(10, dist),
+        initialZoom: zoomScale,
+        lastRatio: 1.0,
+        isPinching: true,
+        originX,
+        originY,
+        initialMidX: midX,
+        initialMidY: midY,
+        lastMidX: midX,
+        lastMidY: midY,
+      };
+    } else if (e.touches.length === 1) {
+      pinchRef.current.isPinching = false;
+      const now = Date.now();
+      touchSwipeRef.current = {
+        startX: e.touches[0].clientX,
+        startY: e.touches[0].clientY,
+        lastX: e.touches[0].clientX,
+        lastY: e.touches[0].clientY,
+        currentX: e.touches[0].clientX,
+        currentY: e.touches[0].clientY,
+        startTime: now,
+        isMultiTouch: false,
+        isSwiping: false,
+        activeNeighborPage: null,
+        isPanning: false,
+        history: [{ x: e.touches[0].clientX, y: e.touches[0].clientY, time: now }],
+      };
     }
   };
 
-  const nextPage = () => {
-    if (currentPage < numPages) {
-      setCurrentPage((p) => p + 1);
-      setSelectedAnnotationId(null);
+  const handleViewportTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      e.touches.length >= 2 &&
+      pinchRef.current.isPinching &&
+      pinchRef.current.initialDist > 0
+    ) {
+      touchSwipeRef.current.isMultiTouch = true;
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const ratio = dist / pinchRef.current.initialDist;
+
+      pinchRef.current.lastRatio = ratio;
+      pinchRef.current.lastMidX = midX;
+      pinchRef.current.lastMidY = midY;
+
+      const minRatio = 0.3 / Math.max(0.01, pinchRef.current.initialZoom);
+      const maxRatio = 3.5 / Math.max(0.01, pinchRef.current.initialZoom);
+      const visualRatio = Math.min(maxRatio, Math.max(minRatio, ratio));
+
+      const deltaX = midX - pinchRef.current.initialMidX;
+      const deltaY = midY - pinchRef.current.initialMidY;
+
+      if (pageContainerRef.current) {
+        pageContainerRef.current.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0px) scale(${visualRatio})`;
+      }
+    } else if (e.touches.length === 1 && !pinchRef.current.isPinching && !isNavigatingRef.current) {
+      const currentX = e.touches[0].clientX;
+      const currentY = e.touches[0].clientY;
+      const now = Date.now();
+      const dx = currentX - touchSwipeRef.current.lastX;
+      const dy = currentY - touchSwipeRef.current.lastY;
+
+      touchSwipeRef.current.currentX = currentX;
+      touchSwipeRef.current.currentY = currentY;
+      touchSwipeRef.current.lastX = currentX;
+      touchSwipeRef.current.lastY = currentY;
+
+      // Track recent touch positions for inertia velocity calculation (last 120ms window)
+      const updatedHistory = touchSwipeRef.current.history
+        .filter((p) => now - p.time <= 120)
+        .concat({ x: currentX, y: currentY, time: now });
+      touchSwipeRef.current.history = updatedHistory;
+
+      if (
+        !touchSwipeRef.current.isMultiTouch &&
+        !draggedElementId &&
+        !isDrawingInk &&
+        !isDrawingRedact &&
+        toolMode !== "draw" &&
+        toolMode !== "highlighter" &&
+        toolMode !== "redact"
+      ) {
+        const isZoomed = zoomScale > 1.08;
+        const scroller = viewportScrollerRef.current;
+        const isOverflowing =
+          scroller &&
+          isZoomed &&
+          (scroller.scrollWidth > scroller.clientWidth + 20 ||
+            scroller.scrollHeight > scroller.clientHeight + 20);
+
+        if (isOverflowing && scroller) {
+          // Dragging finger moves/pans the PDF page around when zoomed in
+          scroller.scrollLeft -= dx;
+          scroller.scrollTop -= dy;
+          touchSwipeRef.current.isPanning = true;
+        } else if (!touchSwipeRef.current.isPanning) {
+          const totalDx = currentX - touchSwipeRef.current.startX;
+          const totalDy = currentY - touchSwipeRef.current.startY;
+
+          // Detect start of horizontal page swipe gesture
+          if (!touchSwipeRef.current.isSwiping) {
+            if (Math.abs(totalDx) > 8 && Math.abs(totalDx) > Math.abs(totalDy)) {
+              touchSwipeRef.current.isSwiping = true;
+              const target =
+                totalDx < 0
+                  ? currentPage < numPages
+                    ? currentPage + 1
+                    : null
+                  : currentPage > 1
+                  ? currentPage - 1
+                  : null;
+              touchSwipeRef.current.activeNeighborPage = target;
+
+              if (target !== null && neighborCardRef.current && neighborImgRef.current) {
+                const cardWidth = canvasDimensions.width || 600;
+                const gap = 28;
+                const neighborBaseX = totalDx < 0 ? cardWidth + gap : -(cardWidth + gap);
+                neighborCardRef.current.style.display = "block";
+                neighborCardRef.current.style.transition = "none";
+                neighborCardRef.current.style.transform = `translate3d(${neighborBaseX + totalDx}px, 0, 0)`;
+
+                // Fetch pre-rendered image for neighbor page
+                const cached = pageImageCacheRef.current.get(`${target}_${zoomScale.toFixed(2)}`);
+                if (cached) {
+                  neighborImgRef.current.src = cached;
+                } else {
+                  getCachedPageImage(target, zoomScale).then((imgUrl) => {
+                    if (imgUrl && neighborImgRef.current) {
+                      neighborImgRef.current.src = imgUrl;
+                    }
+                  });
+                }
+              }
+            }
+          }
+
+          // Realtime interactive linked swipe transformation
+          if (touchSwipeRef.current.isSwiping) {
+            const cardWidth = canvasDimensions.width || 600;
+            const gap = 28;
+            const target = touchSwipeRef.current.activeNeighborPage;
+            // Apply rubber-band damping resistance if at outer page boundaries
+            const effectiveDx = target !== null ? totalDx : totalDx * 0.22;
+
+            if (pageContainerRef.current) {
+              pageContainerRef.current.style.transition = "none";
+              pageContainerRef.current.style.transform = `translate3d(${effectiveDx}px, 0, 0)`;
+            }
+
+            if (target !== null && neighborCardRef.current) {
+              const neighborBaseX = totalDx < 0 ? cardWidth + gap : -(cardWidth + gap);
+              neighborCardRef.current.style.transition = "none";
+              neighborCardRef.current.style.transform = `translate3d(${neighborBaseX + effectiveDx}px, 0, 0)`;
+            }
+          }
+        }
+      }
+    }
+  };
+
+  const handleViewportTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (pinchRef.current.isPinching) {
+      if (e.touches.length < 2) {
+        const finalRatio = pinchRef.current.lastRatio;
+        const targetZoom = Math.min(
+          3.5,
+          Math.max(
+            0.3,
+            Number((pinchRef.current.initialZoom * finalRatio).toFixed(2)),
+          ),
+        );
+        const isZoomChanged = Math.abs(targetZoom - zoomScale) >= 0.02;
+
+        const scroller = viewportScrollerRef.current;
+        const container = pageContainerRef.current;
+
+        if (scroller && container) {
+          const sRect = scroller.getBoundingClientRect();
+          const cRect = container.getBoundingClientRect();
+          const focalViewportX = pinchRef.current.lastMidX - sRect.left;
+          const focalViewportY = pinchRef.current.lastMidY - sRect.top;
+          const focalOnPageRatioX = Math.max(
+            0,
+            Math.min(1, (pinchRef.current.lastMidX - cRect.left) / (cRect.width || 1)),
+          );
+          const focalOnPageRatioY = Math.max(
+            0,
+            Math.min(1, (pinchRef.current.lastMidY - cRect.top) / (cRect.height || 1)),
+          );
+
+          focalPointRef.current = {
+            focalViewportX,
+            focalViewportY,
+            focalOnPageRatioX,
+            focalOnPageRatioY,
+            targetZoom,
+          };
+        }
+
+        const deltaX = pinchRef.current.lastMidX - pinchRef.current.initialMidX;
+        const deltaY = pinchRef.current.lastMidY - pinchRef.current.initialMidY;
+
+        pinchRef.current.isPinching = false;
+        pinchRef.current.initialDist = 0;
+        pinchRef.current.lastRatio = 1.0;
+
+        if (!isZoomChanged) {
+          if (pageContainerRef.current) {
+            pageContainerRef.current.style.transition = "transform 0.22s cubic-bezier(0.16, 1, 0.3, 1)";
+            pageContainerRef.current.style.transform = "";
+            setTimeout(() => {
+              if (pageContainerRef.current) {
+                pageContainerRef.current.style.transition = "";
+                pageContainerRef.current.style.willChange = "auto";
+              }
+            }, 230);
+          }
+        } else {
+          setIsAutoFitActive(false);
+          setZoomScale(targetZoom);
+        }
+
+        // Apply smooth coasting settling to viewport if fingers were translating during pinch release
+        if (scroller && (Math.abs(deltaX) > 8 || Math.abs(deltaY) > 8)) {
+          let coastX = deltaX * 0.12;
+          let coastY = deltaY * 0.12;
+          const stepPinchInertia = () => {
+            if (!viewportScrollerRef.current) return;
+            viewportScrollerRef.current.scrollLeft -= coastX;
+            viewportScrollerRef.current.scrollTop -= coastY;
+            coastX *= 0.88;
+            coastY *= 0.88;
+            if (Math.hypot(coastX, coastY) > 0.35) {
+              inertiaAnimRef.current = requestAnimationFrame(stepPinchInertia);
+            } else {
+              inertiaAnimRef.current = null;
+            }
+          };
+          inertiaAnimRef.current = requestAnimationFrame(stepPinchInertia);
+        }
+      }
+    } else if (
+      touchSwipeRef.current.isPanning &&
+      !touchSwipeRef.current.isMultiTouch &&
+      !draggedElementId
+    ) {
+      // User finished panning: calculate velocity and apply exponential decay inertia
+      const now = Date.now();
+      const recentHistory = touchSwipeRef.current.history.filter((p) => now - p.time <= 100);
+      if (recentHistory.length >= 2) {
+        const oldest = recentHistory[0];
+        const newest = recentHistory[recentHistory.length - 1];
+        const dt = Math.max(10, newest.time - oldest.time);
+        let vx = ((newest.x - oldest.x) / dt) * 16;
+        let vy = ((newest.y - oldest.y) / dt) * 16;
+
+        // Clamp maximum fling velocity to prevent disorientation
+        const maxV = 36;
+        const speed = Math.hypot(vx, vy);
+        if (speed > maxV) {
+          vx = (vx / speed) * maxV;
+          vy = (vy / speed) * maxV;
+        }
+
+        // If flick velocity exceeds minimum threshold, coast smoothly to a halt
+        if (speed > 1.0) {
+          const decay = 0.94; // Smooth exponential friction
+          const stepPanInertia = () => {
+            const scroller = viewportScrollerRef.current;
+            if (!scroller) return;
+
+            scroller.scrollLeft -= vx;
+            scroller.scrollTop -= vy;
+
+            vx *= decay;
+            vy *= decay;
+
+            if (Math.hypot(vx, vy) > 0.35) {
+              inertiaAnimRef.current = requestAnimationFrame(stepPanInertia);
+            } else {
+              inertiaAnimRef.current = null;
+            }
+          };
+          inertiaAnimRef.current = requestAnimationFrame(stepPanInertia);
+        }
+      }
+      touchSwipeRef.current.isPanning = false;
+      touchSwipeRef.current.history = [];
+    } else if (touchSwipeRef.current.isSwiping) {
+      // Complete linked swipe transition
+      let endX = touchSwipeRef.current.lastX;
+      if (e.changedTouches && e.changedTouches.length > 0) {
+        endX = e.changedTouches[0].clientX;
+      }
+
+      const totalDx = endX - touchSwipeRef.current.startX;
+      const dt = Math.max(1, Date.now() - touchSwipeRef.current.startTime);
+      const vx = totalDx / dt;
+      const cardWidth = canvasDimensions.width || 600;
+      const gap = 28;
+      const targetPage = touchSwipeRef.current.activeNeighborPage;
+
+      touchSwipeRef.current.isSwiping = false;
+
+      const shouldCommit =
+        targetPage !== null &&
+        (Math.abs(totalDx) > Math.min(90, cardWidth * 0.18) || (Math.abs(totalDx) > 25 && Math.abs(vx) > 0.3));
+
+      const duration = 260;
+      const ease = "cubic-bezier(0.16, 1, 0.3, 1)";
+      const container = pageContainerRef.current;
+      const neighbor = neighborCardRef.current;
+
+      if (shouldCommit && container && neighbor) {
+        isNavigatingRef.current = true;
+        const containerEndX = totalDx < 0 ? -(cardWidth + gap) : cardWidth + gap;
+
+        container.style.transition = `transform ${duration}ms ${ease}`;
+        container.style.transform = `translate3d(${containerEndX}px, 0, 0)`;
+
+        neighbor.style.transition = `transform ${duration}ms ${ease}`;
+        neighbor.style.transform = "translate3d(0, 0, 0)";
+
+        setTimeout(() => {
+          setCurrentPage(targetPage);
+          container.style.transition = "none";
+          container.style.transform = "translate3d(0, 0, 0)";
+          neighbor.style.display = "none";
+          neighbor.style.transition = "none";
+          neighbor.style.transform = "";
+          isNavigatingRef.current = false;
+          triggerHaptic("medium");
+        }, duration + 20);
+      } else {
+        // Snap back to resting position
+        if (container) {
+          container.style.transition = `transform 200ms ${ease}`;
+          container.style.transform = "translate3d(0, 0, 0)";
+        }
+        if (neighbor && targetPage !== null) {
+          const neighborBaseX = totalDx < 0 ? cardWidth + gap : -(cardWidth + gap);
+          neighbor.style.transition = `transform 200ms ${ease}`;
+          neighbor.style.transform = `translate3d(${neighborBaseX}px, 0, 0)`;
+        }
+        setTimeout(() => {
+          if (container) {
+            container.style.transition = "";
+            container.style.transform = "";
+          }
+          if (neighbor) {
+            neighbor.style.display = "none";
+            neighbor.style.transition = "";
+            neighbor.style.transform = "";
+          }
+        }, 220);
+      }
     }
   };
 
   const handleZoomIn = () => {
-    setZoomScale((z) => Math.min(3.0, z + 0.15));
+    setIsAutoFitActive(false);
+    setZoomScale((z) => Math.min(3.5, Number((z + 0.15).toFixed(2))));
   };
 
   const handleZoomOut = () => {
-    setZoomScale((z) => Math.max(0.6, z - 0.15));
+    setIsAutoFitActive(false);
+    setZoomScale((z) => Math.max(0.3, Number((z - 0.15).toFixed(2))));
   };
 
-  // Canvas clicking listener (for adding text/stamps)
+  const handleZoomFit = () => {
+    setIsAutoFitActive(true);
+    const optimal = calculateOptimalFit(originalPageSize.width, originalPageSize.height);
+    setZoomScale(optimal);
+    addLog(`Fitted page to maximize available space (${Math.round(optimal * 100)}%)`, "info");
+    triggerHaptic("light");
+  };
+
+  // Canvas clicking listener (for adding text/stamps/shapes/notes)
   const handleOverlayClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (toolMode === "select" || toolMode === "draw") return;
+    if (toolMode === "select" || toolMode === "draw" || toolMode === "highlighter" || toolMode === "redact") return;
     if (!overlayRef.current) return;
 
     const rect = overlayRef.current.getBoundingClientRect();
@@ -1772,38 +2927,58 @@ export default function App() {
       );
       setSelectedAnnotationId(newTextAnn.id);
       addLog("Placed editable text block layer on page.", "info");
+    } else if (toolMode === "note") {
+      const newNoteAnn: AnnotationItem = {
+        id: `ann_note_${Date.now()}`,
+        type: "note",
+        pageNumber: currentPage,
+        x: pdfX - 16,
+        y: pdfY - 16,
+        width: 32,
+        height: 32,
+        noteComment: "Add review comment here...",
+        noteAuthor: "Reviewer",
+        noteColor: "#fef08a",
+        noteDate: new Date().toLocaleDateString(),
+      };
+      dispatchAnnotationUpdate(
+        (prev) => [...prev, newNoteAnn],
+        "Added sticky comment note",
+      );
+      setSelectedAnnotationId(newNoteAnn.id);
+      setActiveNoteId(newNoteAnn.id);
+      setToolMode("select");
+      addLog("Placed sticky comment note on page.", "info");
     } else if (toolMode === "shape") {
+      const isLineOrArrow = activeShapeType === "line" || activeShapeType === "arrow";
+      const shapeWidth = isLineOrArrow ? 140 : 100;
+      const shapeHeight = isLineOrArrow ? 24 : 50;
+
       const newShapeAnn: AnnotationItem = {
         id: `ann_shape_${Date.now()}`,
         type: "shape",
         pageNumber: currentPage,
-        x: pdfX - 50,
-        y: pdfY - 25,
-        width: 100,
-        height: 50,
-        shapeType: "rectangle",
-        shapeFillColor: "#ffffff",
-        hasFill: true,
+        x: pdfX - shapeWidth / 2,
+        y: pdfY - shapeHeight / 2,
+        width: shapeWidth,
+        height: shapeHeight,
+        shapeType: activeShapeType,
+        shapeFillColor: isLineOrArrow ? "transparent" : "#ffffff",
+        hasFill: !isLineOrArrow,
         shapeStrokeColor: "#000000",
         shapeStrokeWidth: 2,
         hasStroke: true,
       };
       dispatchAnnotationUpdate(
         (prev) => [...prev, newShapeAnn],
-        "Added white masking shape layer",
+        `Added ${activeShapeType} layer`,
       );
       setSelectedAnnotationId(newShapeAnn.id);
       setToolMode("select");
-      addLog("Placed white masking shape on page.", "info");
+      addLog(`Placed ${activeShapeType} on page.`, "info");
     } else if (toolMode === "stamp") {
-      const stampWidth =
-        activeStampType === "CHECKMARK" || activeStampType === "CROSS"
-          ? 32
-          : 120;
-      const stampHeight =
-        activeStampType === "CHECKMARK" || activeStampType === "CROSS"
-          ? 32
-          : 55;
+      const stampWidth = 48;
+      const stampHeight = 48;
 
       const newStampAnn: AnnotationItem = {
         id: `ann_stamp_${Date.now()}`,
@@ -1824,6 +2999,49 @@ export default function App() {
       setToolMode("select");
       addLog(`Stamp [${activeStampType}] dropped onto target page.`, "info");
     }
+  };
+
+  // Image upload insertion
+  const handleImageUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const img = new Image();
+      img.onload = () => {
+        const maxDim = 160;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          const ratio = Math.min(maxDim / w, maxDim / h);
+          w *= ratio;
+          h *= ratio;
+        }
+        const pdf_centerX = originalPageSize.width / 2 - w / 2;
+        const pdf_centerY = originalPageSize.height / 2 - h / 2;
+
+        const imgAnn: AnnotationItem = {
+          id: `ann_img_${Date.now()}`,
+          type: "image",
+          pageNumber: currentPage,
+          x: Math.max(20, pdf_centerX),
+          y: Math.max(20, pdf_centerY),
+          width: Math.round(w),
+          height: Math.round(h),
+          imageDataUrl: dataUrl,
+          signatureDataUrl: dataUrl,
+        };
+
+        dispatchAnnotationUpdate(
+          (prev) => [...prev, imgAnn],
+          `Inserted image "${file.name}"`,
+        );
+        setSelectedAnnotationId(imgAnn.id);
+        setToolMode("select");
+        addLog(`Inserted image seal/logo: ${file.name}`, "success");
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
   };
 
   // Placement of saved signatures on page
@@ -1852,11 +3070,11 @@ export default function App() {
     addLog("Placed digital signature seal onto active document.", "success");
   };
 
-  // Drawing event handlers in draw mode
+  // Drawing event handlers in draw mode and highlighter mode
   const handleInkStart = (
     e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
   ) => {
-    if (toolMode !== "draw") return;
+    if (toolMode !== "draw" && toolMode !== "highlighter") return;
     if (!overlayRef.current) return;
 
     const rect = overlayRef.current.getBoundingClientRect();
@@ -1864,7 +3082,11 @@ export default function App() {
     let clientY = 0;
 
     if ("touches" in e) {
-      if (e.touches && e.touches.length > 0) {
+      if (e.touches && e.touches.length > 1) {
+        // Multi-touch: allow pinch zoom to take precedence
+        return;
+      }
+      if (e.touches && e.touches.length === 1) {
         clientX = e.touches[0].clientX;
         clientY = e.touches[0].clientY;
       } else {
@@ -1889,7 +3111,7 @@ export default function App() {
   const handleInkMove = (
     e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>,
   ) => {
-    if (!isDrawingInk || toolMode !== "draw" || !overlayRef.current) return;
+    if (!isDrawingInk || (toolMode !== "draw" && toolMode !== "highlighter") || !overlayRef.current) return;
 
     const rect = overlayRef.current.getBoundingClientRect();
     let clientX = 0;
@@ -1925,6 +3147,8 @@ export default function App() {
       return;
     }
 
+    const isHighlighter = toolMode === "highlighter";
+
     // Capture min and max boundingbox
     const xs = currentInkPoints.map((p) => p.x);
     const ys = currentInkPoints.map((p) => p.y);
@@ -1935,7 +3159,7 @@ export default function App() {
 
     // Save as normalized relative drawing item
     const drawAnn: AnnotationItem = {
-      id: `ann_draw_${Date.now()}`,
+      id: `ann_${isHighlighter ? "hl" : "draw"}_${Date.now()}`,
       type: "drawing",
       pageNumber: currentPage,
       x: minX,
@@ -1943,15 +3167,16 @@ export default function App() {
       width: Math.max(10, maxX - minX),
       height: Math.max(10, maxY - minY),
       drawingPoints: currentInkPoints,
-      drawingColor: inkColor,
-      drawingWidth: inkWidth,
+      drawingColor: isHighlighter ? highlighterColor : inkColor,
+      drawingWidth: isHighlighter ? highlighterWidth : inkWidth,
+      isHighlighter,
     };
 
     dispatchAnnotationUpdate(
       (prev) => [...prev, drawAnn],
-      "Added drawing layer",
+      isHighlighter ? "Added highlighter stroke" : "Added drawing layer",
     );
-    addLog("Saved hand-drawn stroke as vector layer.", "info");
+    addLog(isHighlighter ? "Saved highlighter markup layer." : "Saved hand-drawn stroke as vector layer.", "info");
     setCurrentInkPoints([]);
   };
 
@@ -1965,7 +3190,11 @@ export default function App() {
     let clientY = 0;
 
     if ("touches" in e) {
-      if (e.touches && e.touches.length > 0) {
+      if (e.touches && e.touches.length > 1) {
+        // Multi-touch: allow pinch zoom to take precedence
+        return;
+      }
+      if (e.touches && e.touches.length === 1) {
         clientX = e.touches[0].clientX;
         clientY = e.touches[0].clientY;
       } else return;
@@ -2159,14 +3388,26 @@ export default function App() {
   };
 
   // Draggable handlers
-  const handleDragStart = (e: React.MouseEvent, ann: AnnotationItem) => {
+  const getEventClientPos = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent) => {
+    if ("touches" in e && e.touches && e.touches.length > 0) {
+      return { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY };
+    }
+    if ("changedTouches" in e && e.changedTouches && e.changedTouches.length > 0) {
+      return { clientX: e.changedTouches[0].clientX, clientY: e.changedTouches[0].clientY };
+    }
+    const mouseEvt = e as React.MouseEvent;
+    return { clientX: mouseEvt.clientX, clientY: mouseEvt.clientY };
+  };
+
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent, ann: AnnotationItem) => {
     e.stopPropagation();
 
     setSelectedAnnotationId(ann.id);
     setDraggedElementId(ann.id);
 
-    const clientX = e.clientX;
-    const clientY = e.clientY;
+    const pos = getEventClientPos(e);
+    const clientX = pos.clientX;
+    const clientY = pos.clientY;
 
     const elementX_px = ann.x * scaleMultiplier;
     const elementY_px = ann.y * scaleMultiplier;
@@ -2177,35 +3418,38 @@ export default function App() {
     });
   };
 
-  const handleResizeStart = (e: React.MouseEvent, ann: AnnotationItem) => {
+  const handleResizeStart = (e: React.MouseEvent | React.TouchEvent, ann: AnnotationItem) => {
     e.stopPropagation();
 
     setSelectedAnnotationId(ann.id);
     setDraggedElementId(ann.id);
     setResizeDirection("br");
 
+    const pos = getEventClientPos(e);
     setDragOffset({
-      x: e.clientX,
-      y: e.clientY,
+      x: pos.clientX,
+      y: pos.clientY,
     });
   };
 
-  const handleGlobalMouseMoveOrTouch = (e: React.MouseEvent) => {
+  const handleGlobalMouseMoveOrTouch = (e: React.MouseEvent | React.TouchEvent) => {
     if (!draggedElementId) return;
 
     const ann = annotations.find((a) => a.id === draggedElementId);
     if (!ann) return;
 
+    const pos = getEventClientPos(e);
+
     if (resizeDirection === "br") {
       // Delta-based scale resizing
-      const deltaX_px = e.clientX - dragOffset.x;
-      const deltaY_px = e.clientY - dragOffset.y;
+      const deltaX_px = pos.clientX - dragOffset.x;
+      const deltaY_px = pos.clientY - dragOffset.y;
 
       const deltaX_pdf = deltaX_px / scaleMultiplier;
       const deltaY_pdf = deltaY_px / scaleMultiplier;
 
       // Update offsets to current position
-      setDragOffset({ x: e.clientX, y: e.clientY });
+      setDragOffset({ x: pos.clientX, y: pos.clientY });
 
       setAnnotations((prev) =>
         prev.map((item) => {
@@ -2223,11 +3467,8 @@ export default function App() {
       const rect = overlayRef.current?.getBoundingClientRect();
       if (!rect) return;
 
-      const currentX_px = e.clientX - rect.left - dragOffset.x;
-      const currentY_px = e.clientY - rect.top - dragOffset.y;
-
-      const currentX_pdf = (e.clientX - dragOffset.x) / scaleMultiplier;
-      const currentY_pdf = (e.clientY - dragOffset.y) / scaleMultiplier;
+      const currentX_pdf = (pos.clientX - dragOffset.x) / scaleMultiplier;
+      const currentY_pdf = (pos.clientY - dragOffset.y) / scaleMultiplier;
 
       setAnnotations((prev) =>
         prev.map((item) => {
@@ -2413,18 +3654,41 @@ export default function App() {
     }
   };
 
-  // Compile final annotated PDF and trigger standard 100% Client-Side memory download!
-  const downloadFinishedPDF = async () => {
+  // Compile final annotated PDF with full security, watermarking, page numbering, flattening and PWA share support
+  const exportPdf = async (options?: {
+    userPassword?: string;
+    ownerPassword?: string;
+    stripMetadata?: boolean;
+    flattenLayers?: boolean;
+    shareDirectly?: boolean;
+  }) => {
     if (!pdfBytes || !pdfDocProxy) return;
 
     try {
       setLoading(true);
+      triggerHaptic("medium");
       addLog("Compiling vector modifications natively...", "info");
 
-      // Load into pdf-lib directly instead of creating a blank document
+      // Load into pdf-lib directly
       const pdfDoc = await PDFDocument.load(pdfBytes, {
         ignoreEncryption: true,
       });
+
+      // Strip metadata if requested
+      if (options?.stripMetadata) {
+        addLog("Scrubbing document metadata (Author, Producer, Revision history)...", "security");
+        try {
+          pdfDoc.setTitle("");
+          pdfDoc.setAuthor("");
+          pdfDoc.setSubject("");
+          pdfDoc.setKeywords([]);
+          pdfDoc.setProducer("Secure Document System");
+          pdfDoc.setCreator("Zero-Trust Client PWA");
+          pdfDoc.setModificationDate(new Date());
+        } catch (mErr) {
+          console.warn("Could not scrub metadata:", mErr);
+        }
+      }
 
       // Remove XFA from AcroForm to fix Adobe Reader Error 132 while preserving normal pdf vectors!
       let acroForm: any;
@@ -2476,7 +3740,6 @@ export default function App() {
                 const val = storageObj[ann.id].value;
                 const rect = ann.rect; // [x, y, maxX, maxY]
                 if (rect && typeof val === "string") {
-                  // Draw text onto the pdf-lib page directly based on standard coordinates relative to bottom-left
                   page.drawText(val, {
                     x: rect[0] + 1,
                     y: rect[1] + 3,
@@ -2507,14 +3770,15 @@ export default function App() {
         const userAnns = annotations.filter((a) => a.pageNumber === pNum);
 
         const hasRedactions = userAnns.some((a) => a.type === "redact");
-        if (hasRedactions && pdfDocProxy) {
+        const shouldFlatten = options?.flattenLayers || hasRedactions;
+
+        if (shouldFlatten && pdfDocProxy) {
           addLog(
-            `Securely flattening page ${pNum} to permanently obscure redacted text streams...`,
+            `Securely rasterizing & flattening page ${pNum} to permanently obscure layers...`,
             "security",
           );
           try {
             const proxyPage = await pdfDocProxy.getPage(pNum);
-            // Render at high resolution to preserve quality
             const viewport = proxyPage.getViewport({ scale: 2.5 });
             const canvas = document.createElement("canvas");
             canvas.width = viewport.width;
@@ -2527,7 +3791,6 @@ export default function App() {
               for (const ann of userAnns) {
                 if (ann.type === "redact") {
                   ctx.fillStyle = "#000000";
-                  // coordinates are in points, viewport is points * 2.5
                   ctx.fillRect(
                     ann.x * 2.5,
                     ann.y * 2.5,
@@ -2562,6 +3825,7 @@ export default function App() {
           }
         }
 
+        // Draw DOM Annotations
         for (const ann of userAnns) {
           if (ann.type === "text" && ann.text) {
             const textClr = hexToRgb(ann.fontColor) || { r: 14, g: 17, b: 24 };
@@ -2610,7 +3874,7 @@ export default function App() {
                   : undefined,
                 borderWidth: hasStroke ? strokeWidth : 0,
               });
-            } else if (ann.shapeType === "line") {
+            } else if (ann.shapeType === "line" || ann.shapeType === "arrow") {
               page.drawLine({
                 start: { x: ann.x, y: height - ann.y - ann.height / 2 },
                 end: { x: ann.x + ann.width, y: height - ann.y - ann.height / 2 },
@@ -2621,6 +3885,27 @@ export default function App() {
                   ? rgb(fillClr.r / 255, fillClr.g / 255, fillClr.b / 255)
                   : rgb(0, 0, 0),
               });
+              if (ann.shapeType === "arrow") {
+                // Draw arrowhead
+                const arrowX = ann.x + ann.width;
+                const arrowY = height - ann.y - ann.height / 2;
+                page.drawLine({
+                  start: { x: arrowX - 8, y: arrowY + 5 },
+                  end: { x: arrowX, y: arrowY },
+                  thickness: strokeWidth || 2,
+                  color: strokeClr
+                    ? rgb(strokeClr.r / 255, strokeClr.g / 255, strokeClr.b / 255)
+                    : rgb(0, 0, 0),
+                });
+                page.drawLine({
+                  start: { x: arrowX - 8, y: arrowY - 5 },
+                  end: { x: arrowX, y: arrowY },
+                  thickness: strokeWidth || 2,
+                  color: strokeClr
+                    ? rgb(strokeClr.r / 255, strokeClr.g / 255, strokeClr.b / 255)
+                    : rgb(0, 0, 0),
+                });
+              }
             } else {
               page.drawRectangle({
                 x: ann.x,
@@ -2638,10 +3923,11 @@ export default function App() {
             }
           } else if (
             (ann.type === "signature" || ann.type === "image") &&
-            ann.signatureDataUrl
+            (ann.signatureDataUrl || ann.imageDataUrl)
           ) {
-            const sigBytes = base64ToArrayBuffer(ann.signatureDataUrl);
-            const embeddedImage = ann.signatureDataUrl.includes("image/png")
+            const dataUrl = ann.signatureDataUrl || ann.imageDataUrl || "";
+            const sigBytes = base64ToArrayBuffer(dataUrl);
+            const embeddedImage = dataUrl.includes("image/png")
               ? await pdfDoc.embedPng(sigBytes)
               : await pdfDoc.embedJpg(sigBytes);
             page.drawImage(embeddedImage, {
@@ -2724,16 +4010,88 @@ export default function App() {
               g: 34,
               b: 34,
             };
+            const opacity = ann.isHighlighter ? 0.35 : 1.0;
             for (let sIdx = 0; sIdx < ann.drawingPoints.length - 1; sIdx++) {
               const startPt = ann.drawingPoints[sIdx];
               const endPt = ann.drawingPoints[sIdx + 1];
               page.drawLine({
                 start: { x: startPt.x, y: height - startPt.y },
                 end: { x: endPt.x, y: height - endPt.y },
-                thickness: ann.drawingWidth || 3,
+                thickness: ann.drawingWidth || (ann.isHighlighter ? 20 : 3),
                 color: rgb(drawClr.r / 255, drawClr.g / 255, drawClr.b / 255),
+                opacity,
               });
             }
+          }
+        }
+
+        // Apply Watermark if configured
+        if (watermarkConfig && watermarkConfig.text.trim()) {
+          let shouldWatermark = false;
+          if (watermarkConfig.pages === "all") shouldWatermark = true;
+          else if (watermarkConfig.pages === "first" && pNum === 1) shouldWatermark = true;
+          else if (watermarkConfig.pages === "range" && watermarkConfig.pageRange) {
+            const rangeNums = watermarkConfig.pageRange.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+            if (rangeNums.includes(pNum)) shouldWatermark = true;
+          }
+
+          if (shouldWatermark) {
+            const wmClr = hexToRgb(watermarkConfig.color || "#64748b") || { r: 100, g: 116, b: 139 };
+            const rotDegrees = watermarkConfig.rotation ?? -45;
+            page.drawText(watermarkConfig.text, {
+              x: width / 2 - (watermarkConfig.text.length * (watermarkConfig.fontSize || 48)) / 4,
+              y: height / 2,
+              size: watermarkConfig.fontSize || 48,
+              font: hFontBold,
+              color: rgb(wmClr.r / 255, wmClr.g / 255, wmClr.b / 255),
+              opacity: watermarkConfig.opacity ?? 0.25,
+              rotate: degrees(rotDegrees),
+            });
+          }
+        }
+
+        // Apply Page Numbering if configured
+        if (pageNumberConfig) {
+          const startFrom = pageNumberConfig.startFrom || 1;
+          if (pNum >= startFrom) {
+            const numVal = pNum - startFrom + 1;
+            let pageStr = `${numVal}`;
+            if (pageNumberConfig.format === "page-n-of-m") {
+              pageStr = `Page ${numVal} of ${pages.length - startFrom + 1}`;
+            } else if (pageNumberConfig.format === "page-n") {
+              pageStr = `Page ${numVal}`;
+            } else if (pageNumberConfig.format === "n-of-m") {
+              pageStr = `${numVal} / ${pages.length - startFrom + 1}`;
+            }
+
+            const pSize = pageNumberConfig.fontSize || 10;
+            const pClr = hexToRgb(pageNumberConfig.color || "#475569") || { r: 71, g: 85, b: 105 };
+            const margin = 28;
+
+            let px = width / 2 - (pageStr.length * pSize) / 4;
+            let py = margin;
+
+            if (pageNumberConfig.position === "bottom-right") {
+              px = width - margin - (pageStr.length * pSize) / 2;
+              py = margin;
+            } else if (pageNumberConfig.position === "bottom-left") {
+              px = margin;
+              py = margin;
+            } else if (pageNumberConfig.position === "top-right") {
+              px = width - margin - (pageStr.length * pSize) / 2;
+              py = height - margin;
+            } else if (pageNumberConfig.position === "top-center") {
+              px = width / 2 - (pageStr.length * pSize) / 4;
+              py = height - margin;
+            }
+
+            page.drawText(pageStr, {
+              x: px,
+              y: py,
+              size: pSize,
+              font: hFont,
+              color: rgb(pClr.r / 255, pClr.g / 255, pClr.b / 255),
+            });
           }
         }
       }
@@ -2743,7 +4101,15 @@ export default function App() {
       const outBlob = new Blob([finishedBytesComp], {
         type: "application/pdf",
       });
-      const defaultFileName = `Signed_${pdfFileName || "document.pdf"}`;
+      const defaultFileName = `Document_${pdfFileName || "signed.pdf"}`;
+
+      if (options?.shareDirectly) {
+        const shared = await pwaManager.sharePdf(finishedBytesComp, defaultFileName);
+        if (shared) {
+          addLog("Shared document via native system share sheet!", "success");
+          return;
+        }
+      }
 
       const dlLink = document.createElement("a");
       dlLink.href = URL.createObjectURL(outBlob);
@@ -2752,7 +4118,7 @@ export default function App() {
       dlLink.click();
       document.body.removeChild(dlLink);
       addLog(
-        "Document compiled & triggered local memory download successfully!",
+        "Document compiled & exported to local device storage successfully!",
         "success",
       );
     } catch (exportErr: any) {
@@ -2765,6 +4131,8 @@ export default function App() {
       setLoading(false);
     }
   };
+
+  const downloadFinishedPDF = () => exportPdf();
 
   // Rendering of draggable active annotation on sheet overlay
   const renderDraggableAnnotation = (ann: AnnotationItem) => {
@@ -2881,10 +4249,10 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-3 -right-3 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-colors shadow-md pointer-events-auto z-50 cursor-pointer"
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md pointer-events-auto z-50 cursor-pointer"
               title="Delete text box"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           )}
 
@@ -2893,8 +4261,11 @@ export default function App() {
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900 cursor-se-resize shadow-xs z-30"
-            />
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize shadow-xs z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-emerald-400 rounded-full border border-slate-900 shadow-xs" />
+            </div>
           )}
         </div>
       );
@@ -2908,6 +4279,7 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
+          onTouchStart={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto select-none flex items-center justify-center p-0.5 ${
             isSelected
               ? "ring-2 ring-emerald-400 bg-emerald-500/5 cursor-move z-20 shadow-md"
@@ -2936,9 +4308,9 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-7 -right-1 text-[10px] bg-red-600 hover:bg-red-500 text-white rounded bg-red-600 p-0.5 px-1.5 transition-all shadow-xs cursor-pointer font-mono pointer-events-auto z-50"
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md pointer-events-auto z-50 cursor-pointer"
             >
-              Delete
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           )}
 
@@ -2946,27 +4318,17 @@ export default function App() {
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-emerald-400 rounded-full border-2 border-slate-950 cursor-se-resize shadow-sm"
-            />
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-emerald-400 rounded-full border border-slate-900 shadow-xs" />
+            </div>
           )}
         </div>
       );
     }
 
     if (ann.type === "stamp") {
-      const isIconClass =
-        ann.stampType === "CHECKMARK" || ann.stampType === "CROSS";
-      const borderClrClass =
-        ann.stampType === "APPROVED" || ann.stampType === "CHECKMARK"
-          ? "border-emerald-500 text-emerald-500 bg-emerald-500/10"
-          : ann.stampType === "REJECTED" || ann.stampType === "CROSS"
-            ? "border-rose-500 text-rose-500 bg-rose-500/10"
-            : ann.stampType === "SIGN_HERE"
-              ? "border-amber-500 text-amber-500 bg-amber-500/10"
-              : ann.stampType === "INITIAL_HERE"
-                ? "border-purple-500 text-purple-500 bg-purple-500/10"
-                : "border-sky-500 text-sky-500 bg-sky-500/10";
-
       return (
         <div
           key={ann.id}
@@ -2974,14 +4336,11 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
-          className={`absolute group pointer-events-auto select-none flex items-center justify-center ${
+          onTouchStart={(e) => handleDragStart(e, ann)}
+          className={`absolute group pointer-events-auto select-none flex items-center justify-center bg-transparent cursor-move ${
             isSelected
               ? "ring-2 ring-emerald-400 z-20 shadow-md"
               : "hover:ring-1 hover:ring-gray-400 z-10"
-          } ${
-            isIconClass
-              ? "bg-transparent text-xl font-bold cursor-move"
-              : `border-2 border-dashed rounded-lg font-mono font-bold tracking-wide uppercase px-2 text-[10px] text-center select-none cursor-move ${borderClrClass}`
           }`}
           style={{
             left: x_px,
@@ -2990,23 +4349,14 @@ export default function App() {
             height: h_px,
           }}
         >
-          {ann.stampType === "APPROVED" && <span>APPROVED</span>}
-          {ann.stampType === "REJECTED" && <span>REJECTED</span>}
-          {ann.stampType === "SIGN_HERE" && (
-            <span className="text-[9px]">SIGN HERE ➔</span>
-          )}
-          {ann.stampType === "INITIAL_HERE" && (
-            <span className="text-[9px]">INITIAL ➔</span>
-          )}
-          {ann.stampType === "DATE" && (
-            <span className="text-[9px]">DATE PLACE</span>
-          )}
-          {ann.stampType === "CHECKMARK" && (
-            <span className="text-emerald-500 text-2xl font-black">✓</span>
-          )}
-          {ann.stampType === "CROSS" && (
-            <span className="text-rose-500 text-2xl font-black">✗</span>
-          )}
+          {ann.stampType === "APPROVED" && <CheckCircle className="w-full h-full text-emerald-500" />}
+          {ann.stampType === "REJECTED" && <XCircle className="w-full h-full text-rose-500" />}
+          {ann.stampType === "SIGN_HERE" && <FileSignature className="w-full h-full text-amber-500" />}
+          {ann.stampType === "INITIAL_HERE" && <UserCircle className="w-full h-full text-purple-500" />}
+          {ann.stampType === "DATE" && <Calendar className="w-full h-full text-sky-500" />}
+          {ann.stampType === "CHECKMARK" && <Check className="w-full h-full text-emerald-500" />}
+          {ann.stampType === "CROSS" && <XIcon className="w-full h-full text-rose-500" />}
+          {ann.stampType === "CONFIDENTIAL" && <Shield className="w-full h-full text-red-500" />}
 
           {isSelected && (
             <button
@@ -3017,18 +4367,133 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-7 -right-1 text-[10px] bg-red-600 hover:bg-red-500 text-white rounded p-0.5 px-1.5 transition-all shadow-xs cursor-pointer font-mono pointer-events-auto z-50"
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md pointer-events-auto z-50 cursor-pointer"
             >
-              ✕
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           )}
 
-          {!isIconClass && isSelected && (
+          {isSelected && (
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full cursor-se-resize"
-            />
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-emerald-400 rounded-full border border-slate-900 shadow-xs" />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (ann.type === "note") {
+      return (
+        <div
+          key={ann.id}
+          id={`draggable-${ann.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedAnnotationId(ann.id);
+            setActiveNoteId(ann.id);
+          }}
+          onMouseDown={(e) => handleDragStart(e, ann)}
+          onTouchStart={(e) => handleDragStart(e, ann)}
+          className={`absolute group pointer-events-auto cursor-pointer select-none ${
+            isSelected ? "z-30" : "z-10"
+          }`}
+          style={{
+            left: x_px,
+            top: y_px,
+            width: Math.max(36, w_px),
+            height: Math.max(36, h_px),
+          }}
+        >
+          <div
+            className={`w-10 h-10 sm:w-9 sm:h-9 rounded-xl shadow-lg flex items-center justify-center border transition-transform duration-150 ${
+              isSelected
+                ? "ring-2 ring-indigo-500 scale-110 shadow-indigo-500/20"
+                : "hover:scale-105"
+            }`}
+            style={{
+              backgroundColor: ann.noteColor || "#fef08a",
+              borderColor: "#ca8a04",
+            }}
+            title={ann.noteComment || "Review Note"}
+          >
+            <MessageSquare className="w-5 h-5 sm:w-4 sm:h-4 text-amber-900 drop-shadow-xs" />
+          </div>
+
+          {/* Delete button */}
+          {isSelected && (
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteAnnotation(ann.id);
+                if (activeNoteId === ann.id) setActiveNoteId(null);
+              }}
+              className="absolute -top-3 -right-3 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md z-40 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    if (ann.type === "image" && (ann.imageDataUrl || ann.signatureDataUrl)) {
+      return (
+        <div
+          key={ann.id}
+          id={`draggable-${ann.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedAnnotationId(ann.id);
+          }}
+          onMouseDown={(e) => handleDragStart(e, ann)}
+          onTouchStart={(e) => handleDragStart(e, ann)}
+          className={`absolute group pointer-events-auto cursor-move select-none ${
+            isSelected ? "ring-2 ring-indigo-500 z-20 shadow-lg" : "z-10"
+          }`}
+          style={{
+            left: x_px,
+            top: y_px,
+            width: w_px,
+            height: h_px,
+          }}
+        >
+          <img
+            src={ann.imageDataUrl || ann.signatureDataUrl}
+            alt="Inserted Seal"
+            className="w-full h-full object-contain pointer-events-none rounded-sm"
+          />
+
+          {/* Delete button */}
+          {isSelected && (
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteAnnotation(ann.id);
+              }}
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md z-40 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
+            </button>
+          )}
+
+          {/* Resize handle */}
+          {isSelected && (
+            <div
+              onMouseDown={(e) => handleResizeStart(e, ann)}
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-indigo-600 border-2 border-white rounded-full shadow-md" />
+            </div>
           )}
         </div>
       );
@@ -3070,6 +4535,7 @@ export default function App() {
             });
           }}
           onMouseDown={(e) => handleDragStart(e, ann)}
+          onTouchStart={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto cursor-move ${
             isSelected ? "ring-2 ring-emerald-400 z-20 shadow-md" : "z-10"
           }`}
@@ -3089,6 +4555,30 @@ export default function App() {
                 backgroundColor: strokeClr,
               }}
             />
+          ) : shapeType === "arrow" ? (
+            <svg className="w-full h-full" viewBox="0 0 100 24" preserveAspectRatio="none">
+              <defs>
+                <marker
+                  id={`arrowhead-${ann.id}`}
+                  markerWidth="8"
+                  markerHeight="6"
+                  refX="7"
+                  refY="3"
+                  orient="auto"
+                >
+                  <polygon points="0 0, 8 3, 0 6" fill={strokeClr} />
+                </marker>
+              </defs>
+              <line
+                x1="2"
+                y1="12"
+                x2="90"
+                y2="12"
+                stroke={strokeClr}
+                strokeWidth={Math.max(2, strokeWidth)}
+                markerEnd={`url(#arrowhead-${ann.id})`}
+              />
+            </svg>
           ) : (
             <div
               className="w-full h-full transition-all"
@@ -3112,10 +4602,10 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-3 -right-3 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-colors shadow-md pointer-events-auto z-50 cursor-pointer"
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-md pointer-events-auto z-50 cursor-pointer"
               title="Delete shape"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           )}
 
@@ -3124,8 +4614,11 @@ export default function App() {
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full cursor-se-resize shadow-xs z-30"
-            />
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-emerald-400 rounded-full border border-slate-900 shadow-xs" />
+            </div>
           )}
         </div>
       );
@@ -3138,6 +4631,7 @@ export default function App() {
           onClick={(e) => e.stopPropagation()}
           onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => handleDragStart(e, ann)}
+          onTouchStart={(e) => handleDragStart(e, ann)}
           className={`absolute group pointer-events-auto select-none bg-black cursor-move ${
             isSelected ? "ring-2 ring-emerald-400 z-20 shadow-md" : "z-10"
           }`}
@@ -3157,18 +4651,21 @@ export default function App() {
                 e.stopPropagation();
                 handleDeleteAnnotation(ann.id);
               }}
-              className="absolute -top-3 -right-3 w-6 h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-colors shadow-sm"
+              className="absolute -top-3.5 -right-3.5 w-7 h-7 sm:w-6 sm:h-6 bg-rose-500 text-white rounded-full flex items-center justify-center hover:bg-rose-600 transition-transform active:scale-90 shadow-sm pointer-events-auto z-50 cursor-pointer"
               title="Delete block"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
             </button>
           )}
           {isSelected && (
             <div
               id={`resize-handle-${ann.id}`}
               onMouseDown={(e) => handleResizeStart(e, ann)}
-              className="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full cursor-se-resize"
-            />
+              onTouchStart={(e) => handleResizeStart(e, ann)}
+              className="absolute -bottom-2.5 -right-2.5 w-6 h-6 flex items-center justify-center cursor-se-resize z-30 touch-none"
+            >
+              <div className="w-3 h-3 bg-emerald-400 rounded-full border border-slate-900 shadow-xs" />
+            </div>
           )}
         </div>
       );
@@ -3180,9 +4677,11 @@ export default function App() {
   return (
     <div
       id="app-root-container"
-      className={`min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 flex flex-col font-sans transition-colors ${isDarkMode ? "dark" : ""}`}
+      className={`h-[100dvh] h-screen max-h-[100dvh] max-h-screen overflow-hidden bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-200 flex flex-col font-sans transition-colors ${isDarkMode ? "dark" : ""}`}
       onMouseMove={handleGlobalMouseMoveOrTouch}
       onMouseUp={handleGlobalMouseUp}
+      onTouchMove={handleGlobalMouseMoveOrTouch}
+      onTouchEnd={handleGlobalMouseUp}
     >
       {/* Dynamic Incineration Scrub screen block lock */}
       <PurgeOverlay
@@ -3231,98 +4730,208 @@ export default function App() {
           );
           setToolMode("redact");
         }}
-        onNavigate={(page) => setCurrentPage(page)}
+        onNavigate={(page) => navigateToPage(page)}
       />
 
+      {/* Page Reorder & Thumbnails Organizer Modal */}
+      <PageOrganizerModal
+        isOpen={isPageOrganizerOpen}
+        onClose={() => setIsPageOrganizerOpen(false)}
+        pdfBytes={pdfBytes}
+        pdfDocProxy={pdfDocProxy}
+        numPages={numPages}
+        currentPage={currentPage}
+        onUpdatePdfBytes={async (newBytes, newPage) => {
+          await loadPdfFromBytes(newBytes, pdfFileName);
+          if (newPage) setCurrentPage(newPage);
+          addLog("Updated PDF page structure successfully.", "success");
+        }}
+        onSelectPage={(page) => {
+          navigateToPage(page);
+          setIsPageOrganizerOpen(false);
+        }}
+      />
+
+      {/* Watermark & Page Numbering Modal */}
+      <WatermarkModal
+        isOpen={isWatermarkModalOpen}
+        onClose={() => setIsWatermarkModalOpen(false)}
+        totalPages={numPages}
+        onApplyWatermark={(cfg) => {
+          setWatermarkConfig(cfg);
+          addLog(`Applied watermark "${cfg.text}" to document export settings.`, "info");
+        }}
+        onApplyPageNumbers={(cfg) => {
+          setPageNumberConfig(cfg);
+          addLog("Applied page numbering configuration to document export settings.", "info");
+        }}
+      />
+
+      {/* Zero-Trust PDF Security & Sanitization Modal */}
+      <PdfSecurityModal
+        isOpen={isSecurityModalOpen}
+        onClose={() => setIsSecurityModalOpen(false)}
+        fileName={pdfFileName}
+        onExport={async (opts) => {
+          await exportPdf({
+            stripMetadata: opts.stripMetadata,
+            flattenLayers: opts.flattenLayers,
+            shareDirectly: opts.shareDirectly,
+          });
+        }}
+      />
+
+      {/* PWA Mobile Offline & Install Notification Banner */}
+      <PwaInstallBanner />
+
+      {/* Active Sticky Note Popover */}
+      {activeNoteId && (() => {
+        const activeAnn = annotations.find(
+          (a) => a.id === activeNoteId && a.type === "note",
+        );
+        if (!activeAnn) return null;
+        return (
+          <StickyNotePopover
+            annotation={activeAnn}
+            onUpdate={(updates) => {
+              dispatchAnnotationUpdate(
+                (prev) =>
+                  prev.map((a) =>
+                    a.id === activeAnn.id ? { ...a, ...updates } : a,
+                  ),
+                "Updated note comments",
+              );
+            }}
+            onDelete={() => {
+              handleDeleteAnnotation(activeAnn.id);
+              setActiveNoteId(null);
+            }}
+            onClose={() => setActiveNoteId(null)}
+          />
+        );
+      })()}
+
       {/* Keyboard Shortcuts Help Modal */}
-      {isKeyboardHelpOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                <HelpCircle className="w-5 h-5 text-indigo-500" /> Keyboard Shortcuts
-              </h3>
-              <button
-                onClick={() => setIsKeyboardHelpOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
+      <AnimatePresence>
+        {isKeyboardHelpOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs"
+              onClick={() => setIsKeyboardHelpOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 z-10"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
+                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <HelpCircle className="w-5 h-5 text-indigo-500" /> Keyboard Shortcuts
+                </h3>
+                <button
+                  onClick={() => setIsKeyboardHelpOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
 
-            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span>Previous / Next Page</span>
-                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">← → ↑ ↓ / PgUp PgDn</span>
+              <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                  <span>Previous / Next Page</span>
+                  <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">← → ↑ ↓ / PgUp PgDn</span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                  <span>Undo Change</span>
+                  <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Z</span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                  <span>Redo Change</span>
+                  <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Y</span>
+                </div>
+                <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                  <span>Add Text Box</span>
+                  <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Double Click Page</span>
+                </div>
               </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span>Undo Change</span>
-                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Z</span>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span>Redo Change</span>
-                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Ctrl + Y</span>
-              </div>
-              <div className="flex items-center justify-between p-2 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-                <span>Add Text Box</span>
-                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-600 font-bold">Double Click Page</span>
-              </div>
-            </div>
 
-            <div className="pt-2 flex justify-end">
-              <button
-                onClick={() => setIsKeyboardHelpOpen(false)}
-                className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 rounded-xl transition-colors cursor-pointer"
-              >
-                Got it
-              </button>
-            </div>
+              <div className="pt-2 flex justify-end">
+                <button
+                  onClick={() => setIsKeyboardHelpOpen(false)}
+                  className="px-4 py-2 text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-500 rounded-xl transition-colors cursor-pointer"
+                >
+                  Got it
+                </button>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
 
       {/* About & Security Modal */}
-      {isAboutModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                <Lock className="w-5 h-5 text-emerald-500" /> About Secure PDF
-              </h3>
-              <button
-                onClick={() => setIsAboutModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              <p>
-                <strong>Secure PDF</strong> is a zero-trust, 100% client-side PDF editing and signature application.
-              </p>
-              <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-1">
-                <div className="font-bold text-emerald-700 dark:text-emerald-400">🔒 Volatile Memory Architecture</div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  No document or signature data is ever transmitted to a remote server. All parsing, rendering, vector stream manipulation, and redactions execute exclusively in volatile local browser memory.
-                </p>
+      <AnimatePresence>
+        {isAboutModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs"
+              onClick={() => setIsAboutModalOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="relative bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 z-10"
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
+                <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <Lock className="w-5 h-5 text-emerald-500" /> About Secure PDF
+                </h3>
+                <button
+                  onClick={() => setIsAboutModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-bold p-1 rounded-lg cursor-pointer"
+                >
+                  ✕
+                </button>
               </div>
-            </div>
 
-            <div className="pt-2 flex justify-end">
-              <button
-                onClick={() => setIsAboutModalOpen(false)}
-                className="px-4 py-2 text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl transition-colors cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
+              <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                <p>
+                  <strong>Secure PDF</strong> is a zero-trust, 100% client-side PDF editing and signature application.
+                </p>
+                <div className="p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-1">
+                  <div className="font-bold text-emerald-700 dark:text-emerald-400">🔒 Volatile Memory Architecture</div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    No document or signature data is ever transmitted to a remote server. All parsing, rendering, vector stream manipulation, and redactions execute exclusively in volatile local browser memory.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  onClick={() => setIsAboutModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
 
       {/* Application Top Bar Header */}
-      <header className="h-14 flex items-center justify-between px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 sticky top-0 transition-colors">
+      <header className="relative h-14 flex items-center justify-between px-2 sm:px-4 lg:px-6 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-xs z-40 shrink-0 transition-colors">
         <input
           ref={fileInputRef}
           id="pdf-file-uploader-input"
@@ -3331,450 +4940,715 @@ export default function App() {
           onChange={handleFileUpload}
           className="hidden"
         />
-        <div className="w-full flex items-center justify-between gap-4">
-          <div className="flex items-center gap-6">
-            {/* Branding Logo & Title */}
-            <div className="flex items-center gap-2.5">
-              <div className="bg-indigo-600 p-1.5 rounded-lg text-white shadow-xs">
-                <Lock className="w-4 h-4" />
-              </div>
-              <h1 className="text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-none">
-                Secure PDF
-              </h1>
-            </div>
 
-            {/* Adobe Style Top Menu Bar */}
-            <div ref={menuBarRef} className="relative flex items-center gap-0.5 border-l border-slate-200 dark:border-slate-700 pl-4">
-              {(["file", "edit", "insert", "view", "help"] as const).map((menuName) => {
-                const isDisabled = !pdfBytes && ["edit", "insert", "view"].includes(menuName);
-                const isOpen = activeMenu === menuName && !isDisabled;
-                const label = menuName.charAt(0).toUpperCase() + menuName.slice(1);
-                return (
-                  <div key={menuName} className="relative">
+        {/* Left-Aligned Menu & Navigation Section */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 z-10">
+          {/* Mobile Thumbnails Drawer Toggle Button */}
+          {pdfBytes && (
+            <button
+              onClick={() => setIsSidebarOpen((prev) => !prev)}
+              title="Toggle Page Thumbnails"
+              className="p-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg md:hidden cursor-pointer shrink-0"
+            >
+              <Grid className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Mobile Menu Dropdown (Left Aligned) */}
+          <div ref={mobileMenuRef} className="relative md:hidden">
+            <motion.button
+              whileTap={{ scale: 0.94 }}
+              onClick={() => setIsMenuOpen((prev) => !prev)}
+              className="min-h-[36px] px-3 py-1.5 text-xs font-bold rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer transition-colors border border-slate-200 dark:border-slate-700 shadow-xs"
+            >
+              <Menu className="w-4 h-4" />
+              <span>Menu</span>
+            </motion.button>
+
+            <AnimatePresence>
+              {isMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: -8 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: -8 }}
+                  transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+                  className="absolute left-0 mt-2 w-64 max-w-[calc(100vw-24px)] bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1.5 text-slate-800 dark:text-slate-200 max-h-[80vh] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700/60"
+                >
+                  <div className="py-1">
                     <button
-                      disabled={isDisabled}
                       onClick={() => {
-                        if (isDisabled) return;
-                        setActiveMenu(isOpen ? null : menuName);
+                        setIsMenuOpen(false);
+                        fileInputRef.current?.click();
                       }}
-                      onMouseEnter={() => {
-                        if (isDisabled) return;
-                        if (activeMenu !== null && activeMenu !== menuName) {
-                          setActiveMenu(menuName);
-                        }
-                      }}
-                      title={isDisabled ? `Open or upload a PDF to enable ${label} menu` : undefined}
-                      className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors select-none ${
-                        isDisabled
-                          ? "opacity-40 cursor-not-allowed pointer-events-none text-slate-400 dark:text-slate-500"
-                          : isOpen
-                          ? "bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
-                          : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 cursor-pointer"
-                      }`}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
                     >
-                      {label}
+                      <Upload className="w-4 h-4 text-indigo-500" /> Open New PDF...
                     </button>
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        setIsPdfMergeModalOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                    >
+                      <Layers className="w-4 h-4 text-indigo-500" /> Merge PDFs...
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        setIsPdfCompressModalOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                    >
+                      <Maximize2 className="w-4 h-4 text-indigo-500" /> Compress PDF...
+                    </button>
+                  </div>
 
-                    {isOpen && (
-                      <div className="absolute left-0 mt-1 w-56 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1 text-slate-800 dark:text-slate-200 animate-in fade-in slide-in-from-top-1 duration-150">
-                        {menuName === "file" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                fileInputRef.current?.click();
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Upload className="w-3.5 h-3.5 text-indigo-500" /> Open PDF...</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+O</kbd>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsPdfMergeModalOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Layers className="w-3.5 h-3.5 text-indigo-500" /> Merge PDFs...</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsPdfCompressModalOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Maximize2 className="w-3.5 h-3.5 text-indigo-500" /> Compress PDF...</span>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              disabled={!pdfBytes}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                downloadFinishedPDF();
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                pdfBytes
-                                  ? "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 cursor-pointer font-bold"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><Download className="w-3.5 h-3.5" /> Save / Export PDF</span>
-                              <kbd className="text-[10px] font-mono opacity-60">Ctrl+S</kbd>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              disabled={!pdfBytes && savedSignatures.length === 0}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                executeSecurePurge();
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                pdfBytes || savedSignatures.length > 0
-                                  ? "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 cursor-pointer font-bold"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5" /> Purge & Exit</span>
-                            </button>
-                          </>
-                        )}
+                  {pdfBytes && (
+                    <div className="py-1">
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          setIsPageOrganizerOpen(true);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                      >
+                        <Grid className="w-4 h-4 text-indigo-500" /> Page Organizer...
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          setIsWatermarkModalOpen(true);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4 text-indigo-500" /> Watermark & Numbers...
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          setIsSecurityModalOpen(true);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                      >
+                        <Lock className="w-4 h-4 text-emerald-500" /> Security & Sanitize...
+                      </button>
 
-                        {menuName === "edit" && (
-                          <>
-                            <button
-                              disabled={history.currentIndex <= 0}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                undo();
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                history.currentIndex > 0
-                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><Undo className="w-3.5 h-3.5 text-indigo-500" /> Undo</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Z</kbd>
-                            </button>
-                            <button
-                              disabled={history.currentIndex >= history.timeline.length - 1}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                redo();
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                history.currentIndex < history.timeline.length - 1
-                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><Redo className="w-3.5 h-3.5 text-indigo-500" /> Redo</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Y</kbd>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsSignatureModalOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><PenTool className="w-3.5 h-3.5 text-indigo-500" /> Manage Signatures...</span>
-                            </button>
-                            <button
-                              disabled={annotations.length === 0}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                resetAnnotations([]);
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                annotations.length > 0
-                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Clear All Annotations</span>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              disabled={!pdfBytes}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                handleRotatePage(currentPage, "cw");
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                pdfBytes
-                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><RotateCw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Clockwise</span>
-                            </button>
-                            <button
-                              disabled={!pdfBytes}
-                              onClick={() => {
-                                setActiveMenu(null);
-                                handleRotatePage(currentPage, "ccw");
-                              }}
-                              className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
-                                pdfBytes
-                                  ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
-                                  : "opacity-40 cursor-not-allowed"
-                              }`}
-                            >
-                              <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Counter-CW</span>
-                            </button>
-                          </>
-                        )}
+                      {/* Redaction Options */}
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          setToolMode("redact");
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-600 dark:text-rose-400 flex items-center gap-3 cursor-pointer"
+                      >
+                        <EyeOff className="w-4 h-4 text-rose-500" /> Redact Area (Blackout Tool)
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          setIsFindAndRedactOpen(true);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-600 dark:text-rose-400 flex items-center gap-3 cursor-pointer"
+                      >
+                        <ShieldAlert className="w-4 h-4 text-rose-500" /> Find & Auto-Redact Patterns...
+                      </button>
 
-                        {menuName === "insert" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setToolMode("text");
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Type className="w-3.5 h-3.5 text-indigo-500" /> Text Box</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">Double Click</kbd>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setToolMode("draw");
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Edit3 className="w-3.5 h-3.5 text-indigo-500" /> Freehand Ink</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setToolMode("shape");
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Square className="w-3.5 h-3.5 text-indigo-500" /> Masking Rectangle</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setToolMode("redact");
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><EyeOff className="w-3.5 h-3.5 text-rose-500" /> Permanent Redaction</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsFindAndRedactOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer text-rose-600 dark:text-rose-400 font-bold"
-                            >
-                              <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5 text-rose-500" /> Find & Auto-Redact Patterns...</span>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsSignatureModalOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><CheckSquare className="w-3.5 h-3.5 text-indigo-500" /> Signature Seal...</span>
-                            </button>
-                          </>
-                        )}
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          downloadFinishedPDF();
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-extrabold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 flex items-center gap-3 cursor-pointer"
+                      >
+                        <Download className="w-4 h-4" /> Save / Export PDF
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          exportPdf({ shareDirectly: true });
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                      >
+                        <Share2 className="w-4 h-4 text-indigo-500" /> Native Mobile Share...
+                      </button>
+                    </div>
+                  )}
 
-                        {menuName === "view" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsSidebarOpen(!isSidebarOpen);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Sidebar className="w-3.5 h-3.5 text-indigo-500" /> {isSidebarOpen ? "Hide Side Panel" : "Show Side Panel"}</span>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                handleZoomIn();
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><ZoomIn className="w-3.5 h-3.5 text-indigo-500" /> Zoom In</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">+15%</kbd>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                handleZoomOut();
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><ZoomOut className="w-3.5 h-3.5 text-indigo-500" /> Zoom Out</span>
-                              <kbd className="text-[10px] text-slate-400 font-mono">-15%</kbd>
-                            </button>
-                            <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsDarkMode(!isDarkMode);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2">
-                                {isDarkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-500" />}
-                                {isDarkMode ? "Light Mode" : "Dark Mode"}
-                              </span>
-                            </button>
-                          </>
-                        )}
-
-                        {menuName === "help" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsKeyboardHelpOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><HelpCircle className="w-3.5 h-3.5 text-indigo-500" /> Keyboard Shortcuts</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setActiveMenu(null);
-                                setIsAboutModalOpen(true);
-                              }}
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
-                            >
-                              <span className="flex items-center gap-2"><Lock className="w-3.5 h-3.5 text-emerald-500" /> Security & About</span>
-                            </button>
-                          </>
-                        )}
-                      </div>
+                  <div className="py-1">
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        setIsDarkMode(!isDarkMode);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                    >
+                      {isDarkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-500" />}
+                      {isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        handleTriggerPwaInstall();
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                    >
+                      <Smartphone className="w-4 h-4 text-indigo-500" /> Install App (PWA)
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        setIsAboutModalOpen(true);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-3 cursor-pointer"
+                    >
+                      <Lock className="w-4 h-4 text-emerald-500" /> Security & Privacy Info
+                    </button>
+                    {pdfBytes && (
+                      <button
+                        onClick={() => {
+                          setIsMenuOpen(false);
+                          executeSecurePurge();
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-xs font-extrabold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 flex items-center gap-3 cursor-pointer"
+                      >
+                        <ShieldAlert className="w-4 h-4" /> Purge Memory & Close
+                      </button>
                     )}
                   </div>
-                );
-              })}
-            </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Auto-Save Indicator */}
-            {pdfBytes && (
-              <div id="auto-save-status-indicator" className="flex items-center">
-                {autoSaveStatus === "saved" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/80">
-                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
-                    <span className="hidden sm:inline">Auto-Saved</span>
-                  </span>
-                )}
-                {autoSaveStatus === "saving" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/80">
-                    <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
-                    <span className="hidden sm:inline">Saving...</span>
-                  </span>
-                )}
-                {autoSaveStatus === "restored" && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80">
-                    <HardDrive className="w-3 h-3 text-indigo-500" />
-                    <span className="hidden sm:inline">Restored</span>
-                  </span>
-                )}
+          {/* Adobe Style Top Menu Bar (Desktop - Left Aligned) */}
+          <div ref={menuBarRef} className="relative hidden md:flex items-center gap-0.5">
+            {(["file", "edit", "insert", "view", "help"] as const).map((menuName) => {
+              const isDisabled = !pdfBytes && ["edit", "insert", "view"].includes(menuName);
+              const isOpen = activeMenu === menuName && !isDisabled;
+              const label = menuName.charAt(0).toUpperCase() + menuName.slice(1);
+              return (
+                <div key={menuName} className="relative">
+                  <button
+                    disabled={isDisabled}
+                    onClick={() => {
+                      if (isDisabled) return;
+                      setActiveMenu(isOpen ? null : menuName);
+                    }}
+                    onMouseEnter={() => {
+                      if (isDisabled) return;
+                      if (activeMenu !== null && activeMenu !== menuName) {
+                        setActiveMenu(menuName);
+                      }
+                    }}
+                    title={isDisabled ? `Open or upload a PDF to enable ${label} menu` : undefined}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors select-none ${
+                      isDisabled
+                        ? "opacity-40 cursor-not-allowed pointer-events-none text-slate-400 dark:text-slate-500"
+                        : isOpen
+                        ? "bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 cursor-pointer"
+                    }`}
+                  >
+                    {label}
+                  </button>
+
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.96, y: -4 }}
+                        transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                        className="absolute left-0 mt-1 w-60 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 py-1 text-slate-800 dark:text-slate-200"
+                      >
+                      {menuName === "file" && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              fileInputRef.current?.click();
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Upload className="w-3.5 h-3.5 text-indigo-500" /> Open PDF...</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+O</kbd>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsPdfMergeModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Layers className="w-3.5 h-3.5 text-indigo-500" /> Merge PDFs...</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsPdfCompressModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Maximize2 className="w-3.5 h-3.5 text-indigo-500" /> Compress PDF...</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsPageOrganizerOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            <span className="flex items-center gap-2"><Grid className="w-3.5 h-3.5 text-indigo-500" /> Page Organizer & Reorder...</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsWatermarkModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            <span className="flex items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-indigo-500" /> Watermark & Page Numbers...</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsSecurityModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer disabled:opacity-40"
+                          >
+                            <span className="flex items-center gap-2"><Lock className="w-3.5 h-3.5 text-emerald-500" /> Security & Sanitization...</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsFindAndRedactOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer disabled:opacity-40 text-rose-600 dark:text-rose-400 font-semibold"
+                          >
+                            <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5 text-rose-500" /> Find & Auto-Redact...</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              downloadFinishedPDF();
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 cursor-pointer font-bold"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><Download className="w-3.5 h-3.5" /> Save / Export PDF</span>
+                            <kbd className="text-[10px] font-mono opacity-60">Ctrl+S</kbd>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              exportPdf({ shareDirectly: true });
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-200"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><Share2 className="w-3.5 h-3.5 text-indigo-500" /> Native Mobile Share...</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            disabled={!pdfBytes && savedSignatures.length === 0}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              executeSecurePurge();
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes || savedSignatures.length > 0
+                                ? "text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/30 cursor-pointer font-bold"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5" /> Purge & Exit</span>
+                          </button>
+                        </>
+                      )}
+
+                      {menuName === "edit" && (
+                        <>
+                          <button
+                            disabled={history.currentIndex <= 0}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              undo();
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              history.currentIndex > 0
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><Undo className="w-3.5 h-3.5 text-indigo-500" /> Undo</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Z</kbd>
+                          </button>
+                          <button
+                            disabled={history.currentIndex >= history.timeline.length - 1}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              redo();
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              history.currentIndex < history.timeline.length - 1
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><Redo className="w-3.5 h-3.5 text-indigo-500" /> Redo</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+Y</kbd>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsSignatureModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><PenTool className="w-3.5 h-3.5 text-indigo-500" /> Manage Signatures...</span>
+                          </button>
+                          <button
+                            disabled={annotations.length === 0}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              resetAnnotations([]);
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              annotations.length > 0
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Clear All Annotations</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("redact");
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-600 dark:text-rose-400 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><EyeOff className="w-3.5 h-3.5 text-rose-500" /> Redact Area (Blackout Tool)</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsFindAndRedactOpen(true);
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-rose-50 dark:hover:bg-rose-900/30 text-rose-600 dark:text-rose-400 cursor-pointer font-bold"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5 text-rose-500" /> Find & Auto-Redact Patterns...</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              handleRotatePage(currentPage, "cw");
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><RotateCw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Clockwise</span>
+                          </button>
+                          <button
+                            disabled={!pdfBytes}
+                            onClick={() => {
+                              setActiveMenu(null);
+                              handleRotatePage(currentPage, "ccw");
+                            }}
+                            className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between transition-colors ${
+                              pdfBytes
+                                ? "hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+                                : "opacity-40 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5 text-indigo-500" /> Rotate Page Counter-CW</span>
+                          </button>
+                        </>
+                      )}
+
+                      {menuName === "insert" && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("text");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Type className="w-3.5 h-3.5 text-indigo-500" /> Text Box</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">Double Click</kbd>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("draw");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Edit3 className="w-3.5 h-3.5 text-indigo-500" /> Freehand Pen</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("highlighter");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Highlighter className="w-3.5 h-3.5 text-amber-500" /> Text Highlighter</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("note");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5 text-amber-500" /> Sticky Comment Note</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("shape");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Square className="w-3.5 h-3.5 text-indigo-500" /> Shapes & Lines</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              triggerImageUpload();
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><ImageIcon className="w-3.5 h-3.5 text-indigo-500" /> Insert Image / Logo...</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setToolMode("redact");
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer text-rose-600 dark:text-rose-400"
+                          >
+                            <span className="flex items-center gap-2"><EyeOff className="w-3.5 h-3.5 text-rose-500" /> Permanent Redaction</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsFindAndRedactOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer text-rose-600 dark:text-rose-400 font-bold"
+                          >
+                            <span className="flex items-center gap-2"><ShieldAlert className="w-3.5 h-3.5 text-rose-500" /> Find & Auto-Redact Patterns...</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsSignatureModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><CheckSquare className="w-3.5 h-3.5 text-indigo-500" /> Signature Seal...</span>
+                          </button>
+                        </>
+                      )}
+
+                      {menuName === "view" && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsSidebarOpen(!isSidebarOpen);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Sidebar className="w-3.5 h-3.5 text-indigo-500" /> {isSidebarOpen ? "Hide Side Panel" : "Show Side Panel"}</span>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              handleZoomIn();
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><ZoomIn className="w-3.5 h-3.5 text-indigo-500" /> Zoom In</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">+15%</kbd>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              handleZoomOut();
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><ZoomOut className="w-3.5 h-3.5 text-indigo-500" /> Zoom Out</span>
+                            <kbd className="text-[10px] text-slate-400 font-mono">-15%</kbd>
+                          </button>
+                          <div className="border-t border-slate-100 dark:border-slate-700/80 my-1" />
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsDarkMode(!isDarkMode);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2">
+                              {isDarkMode ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-indigo-500" />}
+                              {isDarkMode ? "Light Mode" : "Dark Mode"}
+                            </span>
+                          </button>
+                        </>
+                      )}
+
+                      {menuName === "help" && (
+                        <>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsKeyboardHelpOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><HelpCircle className="w-3.5 h-3.5 text-indigo-500" /> Keyboard Shortcuts</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              handleTriggerPwaInstall();
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Smartphone className="w-3.5 h-3.5 text-indigo-500" /> Install Web App</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveMenu(null);
+                              setIsAboutModalOpen(true);
+                            }}
+                            className="w-full text-left px-3.5 py-2 text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-between transition-colors cursor-pointer"
+                          >
+                            <span className="flex items-center gap-2"><Lock className="w-3.5 h-3.5 text-emerald-500" /> Security & About</span>
+                          </button>
+                        </>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            )}
-
-            {/* Find & Auto-Redact Button */}
-            <button
-              onClick={() => setIsFindAndRedactOpen(true)}
-              disabled={!pdfBytes}
-              title="Find and Auto-Redact Patterns (Emails, SSNs, Credit Cards, etc.)"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/80 text-rose-700 dark:text-rose-300 rounded-xl text-xs font-bold border border-rose-200/80 dark:border-rose-800/80 transition-all cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <ShieldAlert className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
-              <span className="hidden sm:inline">Find & Redact</span>
-            </button>
-
-            {/* PWA Install Button */}
-            <button
-              onClick={handleTriggerPwaInstall}
-              title="Install Secure PDF as App"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-bold border border-indigo-200/80 dark:border-indigo-800/80 transition-all cursor-pointer shrink-0"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span className="hidden sm:inline">Install App</span>
-            </button>
-
-            {/* Core Privacy Checklist */}
-            <div
-              id="privacy-quick-dashboard"
-              className="hidden xl:flex items-center gap-3 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-100 dark:border-emerald-800/50 rounded-full"
-            >
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                Memory Sandbox
-              </span>
-            </div>
-
-            <PdfSearch
-              pdfDocProxy={pdfDocProxy}
-              onNavigate={(page) => setCurrentPage(page)}
-              onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
-            />
+            );
+          })}
           </div>
+        </div>
+
+        {/* Horizontally Centered Brand Logo & Title */}
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-1.5 sm:gap-2 shrink-0 select-none pointer-events-none sm:pointer-events-auto">
+          <div className="bg-indigo-600 p-1.5 rounded-lg text-white shadow-xs">
+            <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          </div>
+          <h1 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 tracking-tight leading-none whitespace-nowrap">
+            Secure PDF
+          </h1>
+        </div>
+
+        {/* Right-Aligned Top Bar Tools */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 z-10">
+          <PdfSearch
+            pdfDocProxy={pdfDocProxy}
+            onNavigate={(page) => navigateToPage(page)}
+            onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
+          />
         </div>
       </header>
 
       {/* Restored Session Alert Banner */}
-      {restoredNotice && (
-        <div className="bg-indigo-600 dark:bg-indigo-700 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-3 shadow-md z-30 animate-in slide-in-from-top duration-200">
-          <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
-            <HardDrive className="w-4 h-4 text-indigo-200 shrink-0" />
-            <span>
-              Auto-saved session restored for <strong className="underline">{restoredNotice.fileName}</strong> ({restoredNotice.annotationsCount} markup layers)
-            </span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => setRestoredNotice(null)}
-              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
-            >
-              Keep Session
-            </button>
-            <button
-              onClick={async () => {
-                await clearAutoSaveSession();
-                setRestoredNotice(null);
-                setPdfBytes(null);
-                setPdfFileName("document.pdf");
-                setAnnotations([]);
-                setAutoSaveStatus("idle");
-              }}
-              className="px-2.5 py-1 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
-            >
-              Discard & Clear
-            </button>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {restoredNotice && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, y: -16 }}
+            animate={{ opacity: 1, height: "auto", y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -16 }}
+            transition={{ duration: 0.2 }}
+            className="bg-indigo-600 dark:bg-indigo-700 text-white px-4 py-2 text-xs font-semibold flex items-center justify-between gap-3 shadow-md z-30 overflow-hidden"
+          >
+            <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap">
+              <HardDrive className="w-4 h-4 text-indigo-200 shrink-0" />
+              <span>
+                Auto-saved session restored for <strong className="underline">{restoredNotice.fileName}</strong> ({restoredNotice.annotationsCount} markup layers)
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setRestoredNotice(null)}
+                className="px-2.5 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
+              >
+                Keep Session
+              </button>
+              <button
+                onClick={async () => {
+                  await clearAutoSaveSession();
+                  setRestoredNotice(null);
+                  setPdfBytes(null);
+                  setPdfFileName("document.pdf");
+                  setAnnotations([]);
+                  setAutoSaveStatus("idle");
+                }}
+                className="px-2.5 py-1 bg-rose-500/80 hover:bg-rose-500 rounded-lg text-white font-bold transition-colors cursor-pointer text-[11px]"
+              >
+                Discard & Clear
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main Workspace Layout */}
-      <main className="flex-1 w-full relative overflow-hidden flex">
+      <main className="flex-1 min-h-0 w-full relative overflow-hidden flex">
         {/* Left Side Column Panel (Page Thumbnails - Adobe Acrobat style) */}
         {pdfBytes && isSidebarOpen && (
-          <aside
-            id="sidebar-left-thumbnails"
-            className="w-56 lg:w-64 bg-slate-50 dark:bg-slate-800/90 border-r border-slate-200 dark:border-slate-700 flex flex-col z-30 flex-shrink-0 h-full shadow-xs transition-all"
-          >
+          <>
+            {/* Mobile Drawer Backdrop */}
+            <div
+              className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-40 md:hidden"
+              onClick={() => setIsSidebarOpen(false)}
+            />
+            <aside
+              id="sidebar-left-thumbnails"
+              className="fixed inset-y-0 left-0 z-50 w-64 md:static md:w-56 lg:w-64 bg-slate-50 dark:bg-slate-800/90 border-r border-slate-200 dark:border-slate-700 flex flex-col flex-shrink-0 h-full shadow-2xl md:shadow-xs transition-transform duration-200"
+            >
             {/* Sidebar Header */}
             <div className="p-3.5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-800">
               <div className="flex items-center gap-2">
@@ -3821,7 +5695,7 @@ export default function App() {
                       pageNumber={pageNum}
                       pdfDocProxy={pdfDocProxy}
                       isActive={currentPage === pageNum}
-                      onClick={() => setCurrentPage(pageNum)}
+                      onClick={() => navigateToPage(pageNum)}
                       onDelete={(e) => {
                         e.stopPropagation();
                         handleDeletePages(pageNum.toString());
@@ -3840,18 +5714,19 @@ export default function App() {
               )}
             </div>
           </aside>
+        </>
         )}
 
         {/* Center Canvas Main Board & Tool Controls (Main Panel spacing) */}
         <section
           id="workspace-center-track"
-          className="flex-1 w-full relative h-full flex flex-col"
+          className="flex-1 min-h-0 w-full relative h-full flex flex-col overflow-hidden"
         >
           {/* Overlay Floating Controls */}
           {pdfBytes && (
             <>
               {/* Toolbar responsive positioning */}
-              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:bottom-auto md:left-auto md:translate-x-0 md:right-4 z-20 pointer-events-none max-w-[98vw]">
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:bottom-auto md:left-auto md:translate-x-0 md:right-4 z-30 pointer-events-none max-w-[98vw] md:max-w-none">
                 <Toolbar
                   activeMode={toolMode}
                   setMode={(mode) => {
@@ -3866,9 +5741,18 @@ export default function App() {
                   setTextFontFamily={setTextFontFamily}
                   activeStampType={activeStampType}
                   setActiveStampType={setActiveStampType}
+                  activeShapeType={activeShapeType}
+                  setActiveShapeType={setActiveShapeType}
+                  highlighterColor={highlighterColor}
+                  setHighlighterColor={setHighlighterColor}
+                  highlighterWidth={highlighterWidth}
+                  setHighlighterWidth={setHighlighterWidth}
                   onOpenSignatureModal={() => setIsSignatureModalOpen(true)}
-                  onSignatureToolClick={() => setIsSidebarOpen(true)}
                   onOpenFindAndRedactModal={() => setIsFindAndRedactOpen(true)}
+                  onOpenWatermarkModal={() => setIsWatermarkModalOpen(true)}
+                  onOpenPageOrganizer={() => setIsPageOrganizerOpen(true)}
+                  onOpenSecurityModal={() => setIsSecurityModalOpen(true)}
+                  onImageUpload={handleImageUpload}
                   savedSignaturesCount={savedSignatures.length}
                   onDeletePage={() => {
                     handleDeletePages(currentPage.toString());
@@ -3876,65 +5760,148 @@ export default function App() {
                 />
               </div>
 
-              {/* Pagination (Top-Center on Phone, Middle-Bottom on Desktop) */}
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 md:top-auto md:bottom-6 z-20 flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1 pointer-events-auto transition-colors">
+              {/* Desktop Unified Pagination & Zoom Bar (Middle-Bottom) */}
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 hidden md:flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200/90 dark:border-slate-700/90 rounded-full shadow-xl px-2 py-1 pointer-events-auto transition-colors gap-1">
                 <button
                   onClick={prevPage}
                   disabled={currentPage <= 1}
-                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  title="Previous Page"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-30 transition-colors cursor-pointer"
                 >
-                  <ChevronLeft className="w-4 h-4 md:w-5 md:h-5" />
+                  <ChevronLeft className="w-4 h-4" />
                 </button>
-                <span className="text-xs md:text-sm font-bold text-slate-600 dark:text-slate-400 px-3 min-w-[70px] md:min-w-[80px] text-center font-mono">
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300 px-2 min-w-[65px] text-center font-mono select-none">
                   {currentPage} / {numPages || "?"}
                 </span>
                 <button
                   onClick={nextPage}
                   disabled={currentPage >= numPages}
-                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-50 transition-colors"
+                  title="Next Page"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 disabled:opacity-30 transition-colors cursor-pointer"
                 >
-                  <ChevronRight className="w-4 h-4 md:w-5 md:h-5" />
+                  <ChevronRight className="w-4 h-4" />
                 </button>
-              </div>
 
-              {/* Zoom (Top-Right on Phone, Bottom-Right on Desktop) */}
-              <div className="absolute top-3 right-3 md:top-auto md:bottom-6 md:right-6 z-20 flex items-center bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-full shadow-lg p-1 pointer-events-auto transition-colors">
+                <div className="w-px h-4 bg-slate-200 dark:bg-slate-700 mx-1 shrink-0" />
+
                 <button
                   onClick={handleZoomOut}
-                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
+                  title="Zoom Out"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
                 >
-                  <ZoomOut className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                  <ZoomOut className="w-4 h-4" />
                 </button>
-                <span className="text-[11px] md:text-xs font-mono font-bold text-slate-700 dark:text-slate-300 px-1.5 select-none min-w-[40px] md:min-w-[50px] text-center">
+                <button
+                  onClick={handleZoomFit}
+                  title="Fit to Screen"
+                  className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 px-2 py-0.5 rounded-md select-none min-w-[48px] text-center cursor-pointer transition-colors"
+                >
                   {Math.round(zoomScale * 100)}%
-                </span>
+                </button>
                 <button
                   onClick={handleZoomIn}
-                  className="p-1.5 md:p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors"
+                  title="Zoom In"
+                  className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
                 >
-                  <ZoomIn className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                  <ZoomIn className="w-4 h-4" />
                 </button>
               </div>
             </>
           )}
 
-          {/* Core Interactive Sandbox Viewport Rendering Layer */}
-          <div className="relative border border-slate-300 dark:border-slate-800 rounded-2xl bg-slate-200 dark:bg-slate-900/50 p-4 md:p-8 overflow-auto flex items-center justify-center h-full shadow-inner transition-colors">
-            {loading && (
-              <div
-                id="viewport-loading-overlay"
-                className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white/70 dark:bg-slate-900/80 backdrop-blur-xs select-none pointer-events-none transition-colors"
+          {/* Redaction Mode Top Helper Toast */}
+          <AnimatePresence>
+            {toolMode === "redact" && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-rose-200 dark:border-rose-800/80 rounded-2xl shadow-xl px-3.5 py-2 flex items-center gap-3 text-xs pointer-events-auto max-w-[94vw]"
               >
-                <div className="w-10 h-10 border-4 border-indigo-600 dark:border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
-                <p className="text-xs font-bold font-mono text-slate-600 dark:text-slate-300">
-                  Memory Cache Processing Page...
-                </p>
-              </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-rose-500 animate-ping shrink-0" />
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    Redaction Mode
+                  </span>
+                </div>
+                <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
+                {isScanningSensitive ? (
+                  <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1.5 text-[11px]">
+                    <Loader2 className="w-3 h-3 text-rose-500 animate-spin" /> Scanning for sensitive patterns...
+                  </span>
+                ) : sensitiveHighlights.length > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-rose-600 dark:text-rose-400 font-semibold text-[11px]">
+                      {sensitiveHighlights.length} sensitive pattern{sensitiveHighlights.length > 1 ? "s" : ""} glowing
+                    </span>
+                    <button
+                      onClick={handleRedactAllDetected}
+                      className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-bold text-[10px] transition-colors cursor-pointer"
+                    >
+                      Redact All ({sensitiveHighlights.length})
+                    </button>
+                  </div>
+                ) : (
+                  <span className="text-slate-500 dark:text-slate-400 text-[11px]">
+                    Click glowing targets or draw a box to blackout sensitive info
+                  </span>
+                )}
+              </motion.div>
             )}
+          </AnimatePresence>
 
+          {/* Floating Page Change Indicator Pill (pops up on page change and fades out) */}
+          <AnimatePresence>
+            {showPageIndicator && pdfBytes && numPages > 0 && (
+              <motion.div
+                key={`page-pill-${currentPage}`}
+                initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.95 }}
+                transition={{ duration: 0.22, ease: "easeOut" }}
+                className="fixed bottom-24 md:bottom-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex items-center gap-2 bg-slate-900/90 dark:bg-slate-800/95 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-2xl border border-slate-700/60 dark:border-slate-600/80 text-xs font-mono font-bold tracking-wide select-none"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>
+                  Page {currentPage} of {numPages}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Core Interactive Sandbox Viewport Rendering Layer */}
+          <div
+            id="pdf-viewport-scroller"
+            ref={viewportScrollerRef}
+            onTouchStart={handleViewportTouchStart}
+            onTouchMove={handleViewportTouchMove}
+            onTouchEnd={handleViewportTouchEnd}
+            onTouchCancel={handleViewportTouchEnd}
+            className="flex-1 min-h-0 w-full relative overflow-auto bg-slate-100 dark:bg-slate-950 transition-colors overscroll-contain select-none flex flex-col no-scrollbar"
+          >
             {pdfBytes ? (
-              <div
-                id="pdf-render-frame-container"
+              <div className="min-h-full min-w-full flex-1 flex items-center justify-center p-1 sm:p-2 md:p-3 pb-20 md:pb-12">
+                <div className="flex items-center justify-center min-w-fit min-h-fit [perspective:1400px] relative shrink-0">
+                  {/* Linked Gesture Neighbor Page Card */}
+                  <div
+                    ref={neighborCardRef}
+                    id="neighbor-page-card-node"
+                    className="pointer-events-none absolute inset-0 m-auto select-none shadow-2xl bg-white dark:bg-[#e2e8f0] border border-slate-300 dark:border-slate-600 rounded-xs will-change-transform z-20 overflow-hidden hidden"
+                    style={{
+                      width: canvasDimensions.width || 600,
+                      height: canvasDimensions.height || 800,
+                    }}
+                  >
+                    <img
+                      ref={neighborImgRef}
+                      alt="Neighbor page"
+                      className="w-full h-full object-contain pointer-events-none select-none block"
+                    />
+                  </div>
+
+                  <div
+                    id="pdf-render-frame-container"
+                    ref={pageContainerRef}
                 onMouseDown={() => {
                   if (toolMode === "select" && selectedAnnotationId) {
                     setSelectedAnnotationId(null);
@@ -3969,12 +5936,20 @@ export default function App() {
                   setToolMode("select");
                   addLog("Placed editable text block layer on page.", "info");
                 }}
-                className="relative shadow-2xl bg-white dark:bg-[#e2e8f0] border border-slate-300 dark:border-slate-600 select-none scale-100 transition-all origin-center dark:brightness-90"
+                className="relative shadow-2xl bg-white dark:bg-[#e2e8f0] border border-slate-300 dark:border-slate-600 rounded-xs select-none scale-100 transition-colors origin-center dark:brightness-90 will-change-transform"
                 style={{
                   width: canvasDimensions.width,
                   height: canvasDimensions.height,
                 }}
               >
+                {/* Dynamic 3D Page Fold Crease & Lighting Sheen Overlay */}
+                <div
+                  ref={pageFoldOverlayRef}
+                  id="page-fold-lighting-overlay"
+                  className="pointer-events-none absolute inset-0 z-40 rounded-xs opacity-0 transition-opacity"
+                  aria-hidden="true"
+                />
+
                 <canvas
                   id="pdf-canvas-frame-node"
                   ref={canvasRef}
@@ -4013,16 +5988,28 @@ export default function App() {
                     handleRedactEnd();
                   }}
                   onTouchStart={(e) => {
-                    handleInkStart(e);
-                    handleRedactStart(e);
+                    if (toolMode === "draw" || toolMode === "highlighter" || toolMode === "redact") {
+                      handleInkStart(e);
+                      handleRedactStart(e);
+                    }
                   }}
                   onTouchMove={(e) => {
-                    handleInkMove(e);
-                    handleRedactMove(e);
+                    if (toolMode === "draw" || toolMode === "highlighter" || toolMode === "redact") {
+                      handleInkMove(e);
+                      handleRedactMove(e);
+                    }
                   }}
-                  onTouchEnd={(e) => {
-                    handleInkEnd();
-                    handleRedactEnd();
+                  onTouchEnd={() => {
+                    if (toolMode === "draw" || toolMode === "highlighter" || toolMode === "redact") {
+                      handleInkEnd();
+                      handleRedactEnd();
+                    }
+                  }}
+                  onTouchCancel={() => {
+                    if (toolMode === "draw" || toolMode === "highlighter" || toolMode === "redact") {
+                      handleInkEnd();
+                      handleRedactEnd();
+                    }
                   }}
                   className={`absolute inset-0 select-none ${
                     toolMode === "select"
@@ -4034,6 +6021,60 @@ export default function App() {
                       : "cursor-default"
                   }`}
                 >
+                  {/* Sensitive pattern glow highlights for smart targeting */}
+                  {toolMode === "redact" &&
+                    sensitiveHighlights.map((det) => {
+                      const alreadyRedacted = annotations.some(
+                        (ann) =>
+                          ann.type === "redact" &&
+                          ann.pageNumber === currentPage &&
+                          Math.abs(ann.x - det.x) < 8 &&
+                          Math.abs(ann.y - det.y) < 8
+                      );
+                      if (alreadyRedacted) return null;
+
+                      return (
+                        <div
+                          key={det.id}
+                          id={`glow-redact-${det.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newRedactAnn: AnnotationItem = {
+                              id: `ann_redact_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+                              type: "redact",
+                              pageNumber: currentPage,
+                              x: det.x,
+                              y: det.y,
+                              width: det.width,
+                              height: det.height,
+                            };
+                            dispatchAnnotationUpdate(
+                              (prev) => [...prev, newRedactAnn],
+                              `Redacted ${det.label}`
+                            );
+                            addLog(
+                              `Redacted suspected sensitive ${det.label} "${det.text}"`,
+                              "security"
+                            );
+                            triggerHaptic("medium");
+                          }}
+                          style={{
+                            left: det.x * scaleMultiplier,
+                            top: det.y * scaleMultiplier,
+                            width: det.width * scaleMultiplier,
+                            height: det.height * scaleMultiplier,
+                          }}
+                          className="absolute z-20 cursor-pointer pointer-events-auto rounded-[3px] border-2 border-rose-500 bg-rose-500/25 shadow-[0_0_14px_rgba(244,63,94,0.85)] hover:bg-rose-500/50 hover:shadow-[0_0_22px_rgba(244,63,94,1)] hover:scale-[1.02] transition-all animate-pulse flex items-center justify-center group"
+                          title={`Suspected ${det.label}: "${det.text}". Click to redact immediately.`}
+                        >
+                          <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 absolute -top-6 left-1/2 -translate-x-1/2 bg-slate-900/95 text-rose-300 text-[10px] font-bold px-2 py-0.5 rounded-md shadow-lg border border-rose-500/40 whitespace-nowrap pointer-events-none z-30 flex items-center gap-1">
+                            <ShieldAlert className="w-2.5 h-2.5 text-rose-400" />
+                            Click to Redact {det.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+
                   {/* Visual SVG Ink Segment tracker renderer for freehand */}
                   <svg
                     className="absolute inset-0 pointer-events-none select-none z-20 w-full h-full"
@@ -4161,32 +6202,36 @@ export default function App() {
                     .map((ann) => renderDraggableAnnotation(ann))}
                 </div>
               </div>
-            ) : (
-              <div
-                id="unloaded-blank-prompt"
-                className="flex flex-col items-center justify-center p-8 text-center max-w-sm"
-              >
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Click to select PDF file"
-                  className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border-2 border-indigo-200 dark:border-indigo-700/60 text-indigo-600 dark:text-indigo-400 rounded-3xl flex items-center justify-center mb-5 shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+            </div>
+          </div>
+          ) : (
+              <div className="min-h-full min-w-full flex-1 flex items-center justify-center p-8">
+                <div
+                  id="unloaded-blank-prompt"
+                  className="flex flex-col items-center justify-center text-center max-w-sm"
                 >
-                  <Upload className="w-10 h-10 animate-pulse group-hover:animate-none" />
-                </button>
-                <h3 className="font-sans font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">
-                  No Private Document Active
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-5">
-                  Upload a standard PDF locally from your device to begin editing and signing securely.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md transition-all hover:scale-105 cursor-pointer inline-flex items-center gap-2"
-                >
-                  <Upload className="w-4 h-4" /> Open PDF...
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Click to select PDF file"
+                    className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border-2 border-indigo-200 dark:border-indigo-700/60 text-indigo-600 dark:text-indigo-400 rounded-3xl flex items-center justify-center mb-5 shadow-lg hover:scale-105 active:scale-95 transition-all cursor-pointer group"
+                  >
+                    <Upload className="w-10 h-10 animate-pulse group-hover:animate-none" />
+                  </button>
+                  <h3 className="font-sans font-bold text-lg text-slate-800 dark:text-slate-200 mb-2">
+                    No Private Document Active
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-5">
+                    Upload a standard PDF locally from your device to begin editing and signing securely.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl shadow-md transition-all hover:scale-105 cursor-pointer inline-flex items-center gap-2"
+                  >
+                    <Upload className="w-4 h-4" /> Open PDF...
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -4195,35 +6240,35 @@ export default function App() {
           {selectedAnnotationId && (
             <div
               id="selection-adjuster-panel"
-              className="bg-white dark:bg-slate-800 border-2 border-indigo-150 dark:border-indigo-500/50 rounded-xl p-4 flex flex-col md:flex-row items-center justify-between gap-4 animate-in slide-in-from-bottom-2 duration-200 shadow-md transition-colors"
+              className="absolute bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-30 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-indigo-200 dark:border-indigo-700/80 rounded-2xl p-2.5 sm:p-3 flex items-center justify-between gap-3 shadow-2xl transition-colors max-w-[92vw] pointer-events-auto"
             >
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2 sm:space-x-3">
                 <Layers className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
                 <div>
                   <div className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
-                    Active Drag Node Elements Selected
+                    Element Selected
                   </div>
                   <p className="text-[10px] text-slate-400 dark:text-slate-500 font-mono font-bold">
-                    ID Ref: {selectedAnnotationId.slice(0, 16)}...
+                    ID: {selectedAnnotationId.slice(0, 14)}...
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
                 <button
                   id="deselect-annotation-btn"
                   onClick={() => setSelectedAnnotationId(null)}
-                  className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 px-3 py-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors cursor-pointer border border-slate-200 dark:border-slate-600"
+                  className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100 px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-colors cursor-pointer border border-slate-200 dark:border-slate-600 text-[11px]"
                 >
-                  Dismiss selection
+                  Dismiss
                 </button>
                 <button
                   id="delete-selected-annotation-btn"
                   onClick={() => handleDeleteAnnotation(selectedAnnotationId)}
-                  className="text-xs font-bold bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 p-1.5 px-4 rounded-xl transition-all flex items-center cursor-pointer uppercase tracking-wider"
+                  className="text-xs font-bold bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 p-1 px-2.5 rounded-lg transition-all flex items-center cursor-pointer text-[11px]"
                 >
-                  <Trash2 className="w-3.5 h-3.5 mr-1.5" />
-                  Burn Element Layer
+                  <Trash2 className="w-3.5 h-3.5 mr-1" />
+                  Delete
                 </button>
               </div>
             </div>
@@ -4231,8 +6276,8 @@ export default function App() {
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 py-4 text-center mt-12 transition-colors shrink-0">
+      {/* Footer - Hidden on mobile devices to prevent taking up screen space */}
+      <footer className="hidden md:block bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 py-2.5 text-center transition-colors shrink-0">
         <div className="max-w-7xl mx-auto px-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
             🔒{" "}
@@ -4245,7 +6290,8 @@ export default function App() {
       </footer>
 
       {/* Shape Customization Context Menu */}
-      {shapeContextMenu && (() => {
+      <AnimatePresence>
+        {shapeContextMenu && (() => {
         const activeShape = annotations.find(
           (a) => a.id === shapeContextMenu.annId,
         );
@@ -4306,10 +6352,15 @@ export default function App() {
         ];
 
         return (
-          <div
+          <motion.div
+            key="shape-context-menu-popover"
+            initial={{ opacity: 0, scale: 0.95, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 6 }}
+            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
-            className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-4 w-64 text-slate-800 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-150"
+            className="fixed z-50 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-4 w-64 text-slate-800 dark:text-slate-100"
             style={{ left: posX, top: posY }}
           >
             {/* Title Header */}
@@ -4510,9 +6561,31 @@ export default function App() {
                 <Trash2 className="w-3.5 h-3.5" /> Delete Shape
               </button>
             </div>
-          </div>
+          </motion.div>
         );
       })()}
+      </AnimatePresence>
     </div>
   );
 }
+
+export default function App() {
+  const [isMobileRoute] = useState(() => {
+    return (
+      typeof window !== "undefined" &&
+      window.location.pathname.startsWith("/mobile-sign")
+    );
+  });
+  const [mobileSessionId] = useState(() => {
+    return typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("sessionId") || ""
+      : "";
+  });
+
+  if (isMobileRoute) {
+    return <MobileSignPage sessionId={mobileSessionId} />;
+  }
+
+  return <MainPdfEditor />;
+}
+

@@ -1,6 +1,6 @@
 {
   "name": "Secure PDF",
-  "description": "A fully private, 100% client-side PDF editor and signer.",
+  "description": "An offline-first, installable PWA for Android & Desktop with 100% private, client-side PDF editing, annotation, signature, page organization, and encryption.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

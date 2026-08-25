@@ -82,7 +82,7 @@ export default function PdfSearch({
           <Search className="w-5 h-5" />
         </button>
       ) : (
-        <div className="absolute right-0 top-0 w-72 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[80vh]">
+        <div className="absolute right-0 top-0 w-72 max-w-[calc(100vw-24px)] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col max-h-[80vh]">
           <form
             onSubmit={handleSearch}
             className="flex items-center p-2 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50"
