@@ -6170,6 +6170,7 @@ function MainPdfEditor() {
                               }
                               strokeLinecap="round"
                               strokeLinejoin="round"
+                              opacity={ann.isHighlighter ? 0.45 : 1}
                               className={
                                 isSel
                                   ? "stroke-indigo-500 drop-shadow-md"
