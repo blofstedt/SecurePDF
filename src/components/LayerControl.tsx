@@ -37,13 +37,13 @@ export default function LayerControl({
   const getLayerIcon = (type: string) => {
     switch (type) {
       case 'text':
-        return <Type className="w-3.5 h-3.5 text-blue-650 text-blue-600 font-bold" />;
+        return <Type className="w-3.5 h-3.5 text-blue-600 font-bold" />;
       case 'drawing':
-        return <PenLine className="w-3.5 h-3.5 text-indigo-650 text-indigo-600 font-bold" />;
+        return <PenLine className="w-3.5 h-3.5 text-indigo-600 font-bold" />;
       case 'stamp':
-        return <Award className="w-3.5 h-3.5 text-amber-650 text-amber-650 font-bold" />;
+        return <Award className="w-3.5 h-3.5 text-amber-600 font-bold" />;
       default:
-        return <Move className="w-3.5 h-3.5 text-emerald-650 text-emerald-650 font-bold" />;
+        return <Move className="w-3.5 h-3.5 text-emerald-600 font-bold" />;
     }
   };
 
