@@ -267,7 +267,7 @@ function MobileSignPage({ sessionId }: { sessionId: string }) {
             </p>
           </div>
         </div>
-        <div className="text-[9px] font-mono font-bold bg-indigo-50 border border-indigo-100 text-indigo-650 p-1 px-2.5 rounded-full select-all">
+        <div className="text-[9px] font-mono font-bold bg-indigo-50 border border-indigo-100 text-indigo-600 p-1 px-2.5 rounded-full select-all">
           ID: {sessionId || "No Session"}
         </div>
       </header>
@@ -6190,7 +6190,7 @@ function MainPdfEditor() {
                                     ev.stopPropagation();
                                     handleDeleteAnnotation(ann.id);
                                   }}
-                                  className="text-[9px] bg-red-650 bg-rose-600 hover:bg-rose-500 text-white rounded p-0.5 px-1.5 leading-none shadow-xs font-bold"
+                                  className="text-[9px] bg-rose-600 hover:bg-rose-500 text-white rounded p-0.5 px-1.5 leading-none shadow-xs font-bold"
                                 >
                                   Wipe
                                 </button>
